@@ -1,1 +1,132 @@
-# 7x7
+# 🎵 7x7 Rhythm Game
+
+<img width="893" height="666" alt="image" src="https://github.com/user-attachments/assets/574e03b0-0d7c-43b8-8536-c6cf60dc607f" />
+
+
+**음악의 흐름에 맞춰 7×7 보드 위에서 장애물을 피하고, 곡이 끝날 때까지 살아남는 리듬 액션 게임입니다.**
+
+Pygame으로 제작한 싱글 플레이 게임입니다. 8개의 음악 스테이지를 선택해 플레이할 수 있으며, 음악 진행에 반응하는 비주얼라이저와 스테이지별 기록·클리어 통계를 제공합니다.
+
+![Python](https://img.shields.io/badge/Python-3.x-blue?logo=python)
+![Pygame](https://img.shields.io/badge/Pygame-2.x-green?logo=python)
+![Genre](https://img.shields.io/badge/Genre-Rhythm%20%7C%20Action-purple)
+
+## ✨ 주요 기능
+
+- **8개의 음악 스테이지** — 튜토리얼부터 보스 스테이지와 파이널 스테이지까지
+- **보스 스테이지 해금** — 스테이지 1~5에서 각각 진행률 30% 이상을 기록하면 스테이지 6 해금
+- **음악 반응형 비주얼라이저** — 24개 주파수 대역의 스펙트럼과 음악 특징에 반응하는 화면 효과
+- **회피 중심의 게임 플레이** — 방향키로 보드 위를 이동하며 다양한 장애물과 패턴을 피하기
+- **플레이 기록 저장** — 최고 진행률, 클리어 횟수, 최고 클리어 등급을 로컬 JSON 파일에 보관
+- **일시정지 및 게임 통계** — 플레이 중 기록과 스테이지 정보를 확인
+
+## 🛠️ 기술 스택
+
+| 구분 | 기술 |
+|---|---|
+| 언어 | Python 3 |
+| 게임 라이브러리 | Pygame |
+| 저장 데이터 | JSON |
+| 음악 시각화 데이터 | `music/main_rhythm.json` |
+
+## 📦 프로젝트 구성
+
+```text
+7x7/
+├── 7x7.py
+├── 7x7_data.json          # 플레이 기록 (없으면 실행 시 새로 생성)
+├── font/
+│   └── Jua-Regular.ttf
+└── music/
+    ├── main_rhythm.json
+    ├── Sunburst_NCS.mp3
+    ├── MintParfait.mp3
+    ├── SmokedTurkeyRag.mp3
+    ├── DaDiDuDonut.mp3
+    ├── Butterfly.mp3
+    ├── MyLittleHero.mp3
+    ├── PixelPig.mp3
+    └── NyanCat.mp3
+```
+
+> 음악 및 폰트 파일은 게임 실행에 필요합니다. 프로젝트 폴더 구조와 파일명을 유지해 주세요.
+
+## 🚀 설치 및 실행
+
+### 1. Python 설치
+
+Python 3을 설치하고 터미널에서 버전을 확인합니다.
+
+```bash
+python --version
+```
+
+Windows에서 `python` 명령을 사용할 수 없다면 `py`를 사용하세요.
+
+### 2. 프로젝트 폴더로 이동
+
+```bash
+cd 7x7
+```
+
+### 3. Pygame 설치
+
+```bash
+python -m pip install pygame
+```
+
+Windows에서 `python` 대신 `py`를 사용하는 경우:
+
+```bash
+py -m pip install pygame
+```
+
+### 4. 게임 실행
+
+```bash
+python 7x7.py
+```
+
+Windows에서는 다음 명령으로도 실행할 수 있습니다.
+
+```bash
+py 7x7.py
+```
+
+## 🎮 조작 방법
+
+| 키 | 동작 |
+|---|---|
+| `↑` `↓` | 스테이지 선택 / 게임 중 이동 |
+| `←` `→` | 게임 중 이동 |
+| `Enter` 또는 `Space` | 선택한 스테이지 시작 |
+| `Esc` 짧게 누르기 | 일시정지 중 게임 재개 |
+| `Esc` 길게 누르기 | 일시정지 중 스테이지 선택 화면으로 돌아가기 |
+| `R` 또는 `Space` 길게 누르기 | 게임 재시작 |
+| `H` | 히트박스 표시 전환 |
+
+## 🏁 플레이 방법
+
+1. 홈 화면에서 방향키로 스테이지를 선택합니다.
+2. `Enter` 또는 `Space`를 눌러 게임을 시작합니다.
+3. 방향키로 7×7 보드 위를 이동하며 장애물을 피합니다.
+4. 음악이 끝날 때까지 살아남으면 스테이지를 클리어합니다.
+5. 클리어 기록과 등급은 자동으로 저장됩니다.
+
+보스 스테이지는 **스테이지 1~5 각각에서 진행률 30% 이상을 달성**해야 해금됩니다. 플레이 기록은 프로젝트 폴더의 `7x7_data.json`에 저장됩니다.
+
+## 🎼 수록 스테이지
+
+- Sunburst
+- MintParfait
+- SmokedTurkeyRag
+- DaDiDuDonut
+- Butterfly
+- MyLittleHero — 보스 스테이지
+- PixelPig
+- NyanCat
+
+## 📝 참고
+
+- 게임 실행 시 `font/` 및 `music/` 폴더가 `7x7.py`와 같은 프로젝트 루트 아래에 있어야 합니다.
+- 음악 파일과 폰트의 저작권 및 사용 조건은 각 원작자와 배포처의 안내를 확인해 주세요.

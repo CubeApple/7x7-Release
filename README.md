@@ -1,7 +1,8 @@
 # 🎵 7x7 Rhythm Game
 
 <img width="893" height="666" alt="image" src="https://github.com/user-attachments/assets/574e03b0-0d7c-43b8-8536-c6cf60dc607f" />
-<img width="896" height="671" alt="image" src="https://github.com/user-attachments/assets/d27c05ed-3182-4031-936c-0062aa193f0b" />
+<img width="896" height="668" alt="image" src="https://github.com/user-attachments/assets/cf362101-bbce-4de2-b937-985a93820450" />
+
 
 
 **음악의 흐름에 맞춰 7×7 보드 위에서 장애물을 피하고, 곡이 끝날 때까지 살아남는 리듬 액션 게임입니다.**

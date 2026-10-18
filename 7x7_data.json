@@ -1,0 +1,56 @@
+{
+    "version": 2,
+    "game_level": 4,
+    "score_record": [
+        62.638109949285045,
+        52.360822107307044,
+        40.908164907295614,
+        57.468311423585625,
+        40.60728630445787,
+        16.890461144721332,
+        60.60354482404315,
+        57.715384436564385
+    ],
+    "level_stats": [
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared"
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared"
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared"
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared"
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared"
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared"
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared"
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared"
+        }
+    ]
+}

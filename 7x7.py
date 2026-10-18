@@ -952,13 +952,29 @@ class VBall(object):
         self,
         position: Tuple[int, int],
         face: int,
-        max_move: int,
+        target_cell: int,
         speed: Tuple[int, int]
         ):
         self.pos = position
         self.face = face
-        self.speed = speed
-        self.spp = -1/(5*(max_move*0.4+1+(face%2-1)*0.4))
+        axis = 1 if face in (0, 2) else 0
+        target_coordinate = (
+            display_size[axis] // 2
+            - GRID_EDGE_OFFSET
+            + target_cell * CELL_SIZE
+        )
+        start_coordinate = position[axis]
+        displacement = target_coordinate - start_coordinate
+        direction = 1 if displacement >= 0 else -1
+        initial_speed = abs(speed[axis])
+        apex_steps = max(2, round(2 * abs(displacement) / initial_speed) + 1)
+        initial_speed = 2 * abs(displacement) / (apex_steps - 1)
+        adjusted_speed = [0.0, 0.0]
+        adjusted_speed[axis] = direction * initial_speed
+        self.speed = tuple(adjusted_speed)
+        self.spp = -initial_speed / apex_steps
+        self.apex_steps = apex_steps
+        self.target_coordinate = target_coordinate
         self.hitbox = pygame.Rect(0, 0, ENEMY_HITBOX_SIZE, ENEMY_HITBOX_SIZE)
         self.dis = ball_dis
 
@@ -974,6 +990,20 @@ class VBall(object):
         if self.face == 3:
             self.speed = (self.speed[0]+self.spp, self.speed[1])
         self.pos = (self.pos[0]+self.speed[0], self.pos[1]+self.speed[1])
+        if self.apex_steps > 0:
+            self.apex_steps -= 1
+            if self.apex_steps == 0:
+                axis = 1 if self.face in (0, 2) else 0
+                self.pos = (
+                    (self.target_coordinate, self.pos[1])
+                    if axis == 0
+                    else (self.pos[0], self.target_coordinate)
+                )
+                self.speed = (
+                    (0.0, self.speed[1])
+                    if axis == 0
+                    else (self.speed[0], 0.0)
+                )
         self.hitbox.center = self.pos
         if player is not None and player.get_rect().colliderect(self.hitbox):
             if not player.hp_minus and not player.invincible:
@@ -1235,8 +1265,8 @@ def spawn_vball():
         vball = VBall()
         vb_face = random.randint(0, 3)
         vb_pos = -GRID_EDGE_OFFSET + CELL_SIZE * random.randint(0, GRID_SIZE - 1)
-        # 최대 7칸을 허용하면 포물선의 정점이 반대쪽 보드 끝칸까지 도달합니다.
-        vb_max = random.randint(1, GRID_SIZE)
+        # 궤도의 정점은 이동 방향을 따라 선택한 한 칸의 중앙에 놓습니다.
+        vb_target_cell = random.randint(0, GRID_SIZE - 1)
         if vb_face == 0:
             position, speed = (
                 (display_size[0] // 2 + vb_pos, display_size[1] // 2 - BOARD_HALF_SIZE - 2 * CELL_SIZE),
@@ -1257,7 +1287,7 @@ def spawn_vball():
                 (display_size[0] // 2 - BOARD_HALF_SIZE - 3 * CELL_SIZE, display_size[1] // 2 + vb_pos),
                 (10, 0)
             )
-        vball.configure(position, vb_face, vb_max, speed)
+        vball.configure(position, vb_face, vb_target_cell, speed)
         if _try_add_enemy(vball):
             return
 
@@ -1431,8 +1461,8 @@ def spawn_enemies_by_level():
             for i in range(random.randint(0, 1)): spawn_ball()
             if random.randint(1, 4) == 1: ball_delay = 0
         if tball_delay <= 0:
-            tball_delay = 10*random.randint(50, 100)
-            for i in range(random.randint(3, 4)): spawn_tball()
+            tball_delay = 10*random.randint(20, 40)
+            for i in range(random.randint(1, 2)): spawn_tball()
         if vball_delay <= 0:
             vball_delay = 10*random.randint(10, 30)
             for i in range(random.randint(2, 3)): spawn_vball()

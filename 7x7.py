@@ -51,8 +51,9 @@ MUSIC_8 = "music/NyanCat.mp3"
 MUSIC_9 = "music/TheWorldRevolvong.mp3"
 MUSIC_10 = "music/Megalovania.mp3"
 MAX_LEVEL = 10
-BOSS_LEVEL_INDEX = 5
-BOSS_UNLOCK_REQUIRED_SCORE = 30.0
+BOSS_LEVEL_INDICES = (5, MAX_LEVEL - 1)
+BOSS_6_UNLOCK_REQUIRED_PROGRESS = 30.0
+BOSS_10_UNLOCK_REQUIRED_LEVEL_INDEX = 8
 MUSIC_TRACKS = (MUSIC_1, MUSIC_2, MUSIC_3, MUSIC_4, MUSIC_5, MUSIC_6, MUSIC_7, MUSIC_8, MUSIC_9, MUSIC_10)
 LEVEL_NAMES = (
     "Sunburst",
@@ -81,7 +82,7 @@ LEVEL_CREATORS = (
 STATE_HOME = "home"
 STATE_PLAY = "play"
 STATE_PAUSE = "pause"
-debug_boss_unlock_override = None
+debug_boss_unlock_overrides = {}
 game_sound = pygame.mixer.Sound(MUSIC_1)
 TRACK_DURATION_SECONDS = {0: game_sound.get_length()}
 
@@ -214,7 +215,7 @@ CROWN_IMAGE = pygame.transform.smoothscale(
 def get_music_visual_features(playback_ms: int, level: int) -> Tuple[float, float, Tuple[float, ...]]:
     """현재 음악 시점의 음높이, 온셋, 주파수 대역을 부드럽게 보간합니다."""
     if level > MAIN_RHYTHM_TRACK_COUNT:
-        # 새 곡 분석 데이터가 추가되기 전에는 절차적 리듬으로 시각 효과를 유지합니다.
+        # 분석 데이터가 등록되지 않은 곡은 절차적 리듬으로 시각 효과를 유지합니다.
         seconds = max(0, playback_ms) / 1000.0
         beat_phase = math.tau * seconds * (1.7 + level * 0.035)
         onset = 255.0 if math.sin(beat_phase) > 0.94 else 0.0
@@ -382,19 +383,34 @@ def draw_board():
         pygame.draw.line(dis, WHITE, (board_start_x, y), (board_start_x + GRID_SIZE * CELL_SIZE, y), 4)
 
 
-def is_boss_level_unlocked() -> bool:
-    """1~5단계 최고 기록이 모두 기준을 넘었는지 확인합니다."""
-    if debug_boss_unlock_override is not None:
-        return debug_boss_unlock_override
-    return all(
-        record >= BOSS_UNLOCK_REQUIRED_SCORE
-        for record in score_record[:BOSS_LEVEL_INDEX]
+def get_best_level_progress(level_index: int) -> float:
+    """저장 데이터의 구버전/신버전 기록 중 높은 진행률을 반환합니다."""
+    return max(
+        score_record[level_index],
+        level_stats[level_index]["best_progress"]
     )
 
 
+def is_boss_level_unlocked(level_index: int) -> bool:
+    """각 보스 단계의 해금 조건을 검사합니다."""
+    if level_index in debug_boss_unlock_overrides:
+        return debug_boss_unlock_overrides[level_index]
+    if level_index == 5:
+        return all(
+            get_best_level_progress(required_level) >= BOSS_6_UNLOCK_REQUIRED_PROGRESS
+            for required_level in range(5)
+        )
+    if level_index == MAX_LEVEL - 1:
+        return level_stats[BOSS_10_UNLOCK_REQUIRED_LEVEL_INDEX]["cleared"]
+    return True
+
+
 def is_level_locked(level_index: int) -> bool:
-    """보스 단계에만 해금 조건을 적용합니다."""
-    return level_index == BOSS_LEVEL_INDEX and not is_boss_level_unlocked()
+    """두 보스 단계에만 해금 조건을 적용합니다."""
+    return (
+        level_index in BOSS_LEVEL_INDICES
+        and not is_boss_level_unlocked(level_index)
+    )
 
 
 def draw_home_menu(
@@ -408,10 +424,8 @@ def draw_home_menu(
     draw_ui_text(dis, "SELECT A MAP", (218, 223, 231, 220), (menu_text_x, 58), 27)
     if selected_level == 0:
         stage_label = f"TUTORIAL  |  1 / {MAX_LEVEL}"
-    elif selected_level == BOSS_LEVEL_INDEX:
+    elif selected_level in BOSS_LEVEL_INDICES:
         stage_label = f"BOSS STAGE  |  {selected_level + 1} / {MAX_LEVEL}"
-    elif selected_level == MAX_LEVEL - 1:
-        stage_label = f"FINAL STAGE  |  {MAX_LEVEL} / {MAX_LEVEL}"
     else:
         stage_label = f"STAGE  {selected_level + 1} / {MAX_LEVEL}"
     draw_ui_text(dis, stage_label, LIGHT_GRAY, (menu_text_x, 91), 14)
@@ -494,9 +508,15 @@ def draw_home_menu(
     )
     draw_ui_text(dis, "UP / DOWN  Select stage", LIGHT_GRAY, (menu_text_x, 790), 16)
     if is_level_locked(selected_level):
+        if selected_level == 5:
+            unlock_message = "LOCKED - CLEAR STAGES 1-5 AT 30%+"
+            unlock_detail = "TO UNLOCK THE STAGE 6 BOSS"
+        else:
+            unlock_message = "LOCKED - CLEAR STAGE 9"
+            unlock_detail = "TO UNLOCK THE STAGE 10 BOSS"
         draw_ui_text(
             dis,
-            "LOCKED - CLEAR STAGES 1-5 AT 30%+",
+            unlock_message,
             (224, 228, 236, 220),
             (display_size[0] // 2, display_size[1] - 108),
             17,
@@ -504,7 +524,7 @@ def draw_home_menu(
         )
         draw_ui_text(
             dis,
-            "TO UNLOCK THE BOSS STAGE",
+            unlock_detail,
             (174, 181, 192, 205),
             (display_size[0] // 2, display_size[1] - 82),
             14,
@@ -1561,7 +1581,7 @@ def spawn_enemies_by_level():
             spawn_log()
             log_delay = 10*random.randint(10, 20)
             for i in range(random.randint(0, 0)): spawn_log()
-    if game_level == 6:
+    if game_level == 6:  # 보스맵
         if ball_delay <= 0:
             ball_delay = 10*random.randint(10, 10)
             for i in range(random.randint(0, 1)): spawn_ball()
@@ -1623,21 +1643,21 @@ def spawn_enemies_by_level():
             for i in range(random.randint(0, 0)): spawn_ball()
             if random.randint(1, 3) == 1: spawn_ball()
         if tball_delay <= 0:
-            tball_delay = 10*random.randint(10, 10)
+            tball_delay = 10*random.randint(20, 20)
             for i in range(random.randint(0, 0)): spawn_tball()
             if random.randint(1, 3) == 1: spawn_tball()
         if vball_delay <= 0:
             vball_delay = 10*random.randint(10, 10)
-            for i in range(random.randint(1, 2)): spawn_vball()
+            for i in range(random.randint(0, 2)): spawn_vball()
         if laser_delay <= 0 and False:
             laser_delay = 10*random.randint(1, 1)
             for i in range(random.randint(0, 0)): spawn_laser()
             if random.randint(1, 3) == 1: spawn_laser()
         if log_delay <= 0:
-            log_delay = 10*random.randint(30, 50)
+            log_delay = 10*random.randint(40, 60)
             for i in range(random.randint(1, 1)): spawn_log()
-            if random.randint(1, 5) != 1: log_delay = 10*20
-    if game_level == 10:
+            if random.randint(1, 4) == 1: log_delay = 10*20
+    if game_level == 10:  # 보스맵
         if ball_delay <= 0 and False:
             ball_delay = 10*random.randint(1, 1)
             for i in range(random.randint(0, 0)): spawn_ball()
@@ -1651,7 +1671,7 @@ def spawn_enemies_by_level():
         if laser_delay <= 0:
             laser_delay = 10*random.randint(1, 1)
             for i in range(random.randint(0, 0)): spawn_laser()
-            if random.randint(1, 5) == 1: spawn_laser()
+            if random.randint(1, 7) == 1: spawn_laser()
         if log_delay <= 0:
             log_delay = 10*random.randint(10, 30)
             for i in range(random.randint(1, 1)): spawn_log()
@@ -2099,9 +2119,16 @@ while should_restart:
                     menu_running = False
                     should_restart = False
                 elif event.type == pygame.KEYDOWN:
-                    # 테스트 시 F6으로 보스 단계 잠금 상태를 임시 전환합니다(저장 파일에는 반영하지 않음).
+                    # 테스트 시 F6으로 선택된 보스의 잠금 상태를 임시 전환합니다.
                     if event.key == pygame.K_F6:
-                        debug_boss_unlock_override = not is_boss_level_unlocked()
+                        debug_level_index = (
+                            selected_level
+                            if selected_level in BOSS_LEVEL_INDICES
+                            else BOSS_LEVEL_INDICES[0]
+                        )
+                        debug_boss_unlock_overrides[debug_level_index] = (
+                            not is_boss_level_unlocked(debug_level_index)
+                        )
                     elif event.key == pygame.K_UP:
                         if selected_level > 0:
                             selected_level -= 1
@@ -2671,6 +2698,5 @@ while should_restart:
         save_dirty = True
     pygame.mixer.music.set_endevent()
     pygame.mixer.music.stop()
-    if save_dirty or not is_running:
-        save_game_data()
+    save_game_data()
 pygame.quit()

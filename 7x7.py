@@ -48,10 +48,12 @@ MUSIC_5 = "music/Butterfly.mp3"
 MUSIC_6 = "music/MyLittleHero.mp3"
 MUSIC_7 = "music/PixelPig.mp3"
 MUSIC_8 = "music/NyanCat.mp3"
-MAX_LEVEL = 8
+MUSIC_9 = "music/TheWorldRevolvong.mp3"
+MUSIC_10 = "music/Megalovania.mp3"
+MAX_LEVEL = 10
 BOSS_LEVEL_INDEX = 5
 BOSS_UNLOCK_REQUIRED_SCORE = 30.0
-MUSIC_TRACKS = (MUSIC_1, MUSIC_2, MUSIC_3, MUSIC_4, MUSIC_5, MUSIC_6, MUSIC_7, MUSIC_8)
+MUSIC_TRACKS = (MUSIC_1, MUSIC_2, MUSIC_3, MUSIC_4, MUSIC_5, MUSIC_6, MUSIC_7, MUSIC_8, MUSIC_9, MUSIC_10)
 LEVEL_NAMES = (
     "Sunburst",
     "MintParfait",
@@ -61,6 +63,8 @@ LEVEL_NAMES = (
     "MyLittleHero",
     "PixelPig",
     "NyanCat",
+    "TheWorldRevolving",
+    "Megalovania",
 )
 LEVEL_CREATORS = (
     "NCS",
@@ -71,12 +75,31 @@ LEVEL_CREATORS = (
     "a_hisa",
     "Di Young",
     "?",
+    "Toby Fox",
+    "Toby Fox",
 )
 STATE_HOME = "home"
 STATE_PLAY = "play"
 STATE_PAUSE = "pause"
 debug_boss_unlock_override = None
 game_sound = pygame.mixer.Sound(MUSIC_1)
+TRACK_DURATION_SECONDS = {0: game_sound.get_length()}
+
+
+def get_track_duration_seconds(level_index: int) -> float:
+    """맵별 음악 길이를 한 번 읽어 캐시합니다."""
+    if level_index not in TRACK_DURATION_SECONDS:
+        duration_sound = pygame.mixer.Sound(MUSIC_TRACKS[level_index])
+        TRACK_DURATION_SECONDS[level_index] = duration_sound.get_length()
+        del duration_sound
+    return TRACK_DURATION_SECONDS[level_index]
+
+
+def format_track_time(seconds: float) -> str:
+    """초 단위 길이를 분:초 형식으로 표시합니다."""
+    total_seconds = max(0, int(seconds))
+    minutes, remaining_seconds = divmod(total_seconds, 60)
+    return f"{minutes:02d}:{remaining_seconds:02d}"
 
 with open(MAIN_RHYTHM_DATA_PATH, "r", encoding="utf-8") as rhythm_file:
     main_rhythm_data = json.load(rhythm_file)
@@ -89,6 +112,7 @@ MAIN_RHYTHM_FRAME_COUNTS = main_rhythm_data["frame_counts"]
 MAIN_RHYTHM_ONSETS = main_rhythm_data["onsets"]
 SPECTRUM_BAND_COUNT = main_rhythm_data["frequency_bands"]
 FEATURE_STRIDE = SPECTRUM_BAND_COUNT + 2
+MAIN_RHYTHM_TRACK_COUNT = len(MAIN_RHYTHM_TRACKS)
 if (
     main_rhythm_data.get("version") != 3
     or not isinstance(MAIN_RHYTHM_SAMPLE_INTERVAL, (int, float))
@@ -96,10 +120,13 @@ if (
     or MAIN_RHYTHM_SAMPLE_INTERVAL <= 0
     or SPECTRUM_BAND_COUNT != 24
     or main_rhythm_data.get("feature_stride") != FEATURE_STRIDE
-    or len(MAIN_RHYTHM_FRAME_COUNTS) != MAX_LEVEL
-    or len(MAIN_RHYTHM_TRACKS) != MAX_LEVEL
-    or len(MAIN_RHYTHM_ONSETS) != MAX_LEVEL
-    or main_rhythm_data["songs"] != [os.path.basename(track) for track in MUSIC_TRACKS]
+    or not 0 < MAIN_RHYTHM_TRACK_COUNT <= MAX_LEVEL
+    or len(MAIN_RHYTHM_FRAME_COUNTS) != MAIN_RHYTHM_TRACK_COUNT
+    or len(MAIN_RHYTHM_ONSETS) != MAIN_RHYTHM_TRACK_COUNT
+    or main_rhythm_data["songs"] != [
+        os.path.basename(track)
+        for track in MUSIC_TRACKS[:MAIN_RHYTHM_TRACK_COUNT]
+    ]
     or any(
         not isinstance(frame_count, int)
         or frame_count <= 0
@@ -136,10 +163,17 @@ SPECTRUM_BAR_COLORS = (
     (235, 235, 235)
 )
 ESC_HOME_HOLD_SECONDS = 1.0
+RESTART_HOLD_SECONDS = ESC_HOME_HOLD_SECONDS
 ESC_PAUSE_TAP_SECONDS = 0.2
 HOLD_GAUGE_SIZE = (190, 9)
+RECORD_FLASH_DURATION = 1.0
 ENEMY_HITBOX_SIZE = round(40 * ELEMENT_SCALE)
 LOG_END_INSET = round(16 * ELEMENT_SCALE)
+CROWN_IMAGE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "image",
+    "crown.png"
+)
 
 ball_dis = pygame.Surface((100, 100), pygame.SRCALPHA)
 pause_dis = pygame.Surface(display_size, pygame.SRCALPHA)
@@ -171,10 +205,31 @@ _ball_sprite_cache = {}
 _tball_ring_cache = {}
 _log_sprite_cache = {}
 _laser_device_cache = {}
+CROWN_IMAGE = pygame.transform.smoothscale(
+    pygame.image.load(CROWN_IMAGE_PATH).convert_alpha(),
+    (24, 24)
+)
 
 
 def get_music_visual_features(playback_ms: int, level: int) -> Tuple[float, float, Tuple[float, ...]]:
     """현재 음악 시점의 음높이, 온셋, 주파수 대역을 부드럽게 보간합니다."""
+    if level > MAIN_RHYTHM_TRACK_COUNT:
+        # 새 곡 분석 데이터가 추가되기 전에는 절차적 리듬으로 시각 효과를 유지합니다.
+        seconds = max(0, playback_ms) / 1000.0
+        beat_phase = math.tau * seconds * (1.7 + level * 0.035)
+        onset = 255.0 if math.sin(beat_phase) > 0.94 else 0.0
+        pitch = 60.0 + 8.0 * math.sin(beat_phase * 0.5)
+        bands = tuple(
+            max(
+                0.0,
+                44.0
+                + 35.0 * math.sin(beat_phase * (0.2 + band * 0.027) + band)
+                + (75.0 if onset else 0.0) * math.sin(band * 0.31) ** 2
+            )
+            for band in range(SPECTRUM_BAND_COUNT)
+        )
+        return pitch, onset, bands
+
     frames = MAIN_RHYTHM_TRACKS[level - 1]
     frame_count = MAIN_RHYTHM_FRAME_COUNTS[level - 1]
     sample_position = max(0, playback_ms) / (1000.0 * MAIN_RHYTHM_SAMPLE_INTERVAL)
@@ -203,7 +258,8 @@ def get_music_visual_features(playback_ms: int, level: int) -> Tuple[float, floa
 def draw_main_rhythm_polygon(
     pitch: float,
     onset_strength: float,
-    playback_ms: int
+    playback_ms: int,
+    record_flash: float = 0.0
 ) -> None:
     """그리드가 비치는 채움과 푸른 기가 도는 선명한 윤곽의 정십이각형을 그립니다."""
     visual_effect_layer.fill((0, 0, 0, 0))
@@ -219,17 +275,31 @@ def draw_main_rhythm_polygon(
         for index in range(12)
     ]
     alpha = round(76 + onset_strength / 255.0 * 24)
-    pygame.draw.polygon(visual_effect_layer, (151, 164, 185, 32), points)
+    flash = max(0.0, min(1.0, record_flash))
+    fill_color = (
+        round(151 + (255 - 151) * flash),
+        round(164 + (210 - 164) * flash),
+        round(185 + (70 - 185) * flash),
+        32
+    )
+    outline_color = (
+        round(190 + (255 - 190) * flash),
+        round(203 + (221 - 203) * flash),
+        round(226 + (110 - 226) * flash),
+        alpha
+    )
+    pygame.draw.polygon(visual_effect_layer, fill_color, points)
     pygame.draw.polygon(
         visual_effect_layer,
-        (190, 203, 226, alpha),
+        outline_color,
         points,
         2
     )
 
 
-def draw_spectrum_bars(levels: Sequence[float]) -> None:
+def draw_spectrum_bars(levels: Sequence[float], record_flash: float = 0.0) -> None:
     """주파수별 회백색 막대를 효과 레이어에 합성해 한 번에 표시합니다."""
+    flash = max(0.0, min(1.0, record_flash))
     for band, level in enumerate(levels):
         if level < 8:
             continue
@@ -238,9 +308,9 @@ def draw_spectrum_bars(levels: Sequence[float]) -> None:
         energy = min(1.0, level / 255.0)
         base_color = SPECTRUM_BAR_COLORS[band % len(SPECTRUM_BAR_COLORS)]
         color = (
-            base_color[0],
-            base_color[1],
-            base_color[2],
+            round(base_color[0] + (255 - base_color[0]) * flash),
+            round(base_color[1] + (220 - base_color[1]) * flash),
+            round(base_color[2] + (80 - base_color[2]) * flash),
             round(230 + energy * 25)
         )
         glow_color = (
@@ -281,6 +351,23 @@ def draw_spectrum_bars(levels: Sequence[float]) -> None:
     dis.blit(visual_effect_layer, (0, 0))
 
 
+def update_level_records(level_index: int, progress: float, current_score: int) -> bool:
+    """현재 기록을 통산 최고 진행률/점수에 반영하고 진행률 신기록 여부를 반환합니다."""
+    global save_dirty
+    progress = max(0.0, min(100.0, progress))
+    stats = level_stats[level_index]
+    previous_progress = max(score_record[level_index], stats["best_progress"])
+    new_progress_record = progress > previous_progress
+    if new_progress_record:
+        score_record[level_index] = progress
+        stats["best_progress"] = progress
+        save_dirty = True
+    if current_score > stats["best_score"]:
+        stats["best_score"] = current_score
+        save_dirty = True
+    return new_progress_record
+
+
 def draw_board():
     """화면 중앙에 설정한 크기의 정사각형 보드를 그립니다."""
     center_x = display_size[0] // 2
@@ -310,17 +397,21 @@ def is_level_locked(level_index: int) -> bool:
     return level_index == BOSS_LEVEL_INDEX and not is_boss_level_unlocked()
 
 
-def draw_home_menu(selected_level: int, fade_alpha: int) -> None:
+def draw_home_menu(
+    selected_level: int,
+    fade_alpha: int,
+    track_duration_seconds: float
+) -> None:
     """음악 미리보기 위에 세로 레벨 캐러셀과 조작 안내를 표시합니다."""
     dis.blit(home_menu_gradient, (display_size[0] - home_menu_gradient.get_width(), 0))
     menu_text_x = display_size[0] - 260
     draw_ui_text(dis, "SELECT A MAP", (218, 223, 231, 220), (menu_text_x, 58), 27)
     if selected_level == 0:
-        stage_label = "TUTORIAL  |  1 / 8"
+        stage_label = f"TUTORIAL  |  1 / {MAX_LEVEL}"
     elif selected_level == BOSS_LEVEL_INDEX:
         stage_label = f"BOSS STAGE  |  {selected_level + 1} / {MAX_LEVEL}"
     elif selected_level == MAX_LEVEL - 1:
-        stage_label = "FINAL STAGE  |  8 / 8"
+        stage_label = f"FINAL STAGE  |  {MAX_LEVEL} / {MAX_LEVEL}"
     else:
         stage_label = f"STAGE  {selected_level + 1} / {MAX_LEVEL}"
     draw_ui_text(dis, stage_label, LIGHT_GRAY, (menu_text_x, 91), 14)
@@ -382,9 +473,23 @@ def draw_home_menu(selected_level: int, fade_alpha: int) -> None:
     )
     draw_ui_text(
         dis,
-        f"Clears: {selected_stats['clear_count']}    All-time: {round(score_record[selected_level], 2)}%",
+        f"Clears: {selected_stats['clear_count']}    Best: {selected_stats['best_progress']:.2f}%",
         LIGHT_GRAY,
         (22, display_size[1] - 158),
+        15
+    )
+    draw_ui_text(
+        dis,
+        f"Best score: {selected_stats['best_score']}    Attempts: {selected_stats['total_attempts']}",
+        LIGHT_GRAY,
+        (22, display_size[1] - 132),
+        14
+    )
+    draw_ui_text(
+        dis,
+        f"Track length: {format_track_time(track_duration_seconds)}",
+        WHITE,
+        (22, display_size[1] - 106),
         15
     )
     draw_ui_text(dis, "UP / DOWN  Select stage", LIGHT_GRAY, (menu_text_x, 790), 16)
@@ -855,16 +960,15 @@ def update_locked_preview_balls(
 ) -> Tuple[float, int]:
     """잠긴 보스 맵에서만 규칙적인 기본 공 패턴을 재생합니다."""
     spawn_timer += delta_time
-    while spawn_timer >= 0.62:
-        spawn_timer -= 0.62
-        lane = (spawn_index // 2) % GRID_SIZE
+    while spawn_timer >= 1.5:
+        spawn_timer -= 1.5
         direction = 1 if spawn_index % 2 == 0 else -1
         board_left = display_size[0] // 2 - BOARD_HALF_SIZE
         board_right = display_size[0] // 2 + BOARD_HALF_SIZE
-        lane_y = display_size[1] // 2 - GRID_EDGE_OFFSET + lane * CELL_SIZE
+        lane_y = display_size[1] // 2
         spawn_x = board_left - 70 if direction > 0 else board_right + 70
         ball = Ball()
-        ball.configure((spawn_x, lane_y), (direction * 3, 0))
+        ball.configure((spawn_x, lane_y), (direction * 2, 0))
         balls.append(ball)
         spawn_index += 1
 
@@ -1069,12 +1173,13 @@ class Log(object):
             if not player.hp_minus and not player.invincible:
                 player.hp_minus = True
 
-        if (
-            self.hitbox.right <= 0
-            or self.hitbox.left >= display_size[0]
-            or self.hitbox.bottom <= 0
-            or self.hitbox.top >= display_size[1]
-        ):
+        has_left_play_area = (
+            (self.face == 0 and self.hitbox.top >= display_size[1])
+            or (self.face == 1 and self.hitbox.right <= 0)
+            or (self.face == 2 and self.hitbox.bottom <= 0)
+            or (self.face == 3 and self.hitbox.left >= display_size[0])
+        )
+        if has_left_play_area:
             self.delete = True
 
     def is_deleted(self) -> bool:
@@ -1436,6 +1541,7 @@ def spawn_enemies_by_level():
             spawn_log()
             log_delay = 10*random.randint(50, 100)
             for i in range(random.randint(0, 0)): spawn_log()
+            if random.randint(1, 4) == 1: log_delay = 10*10
     if game_level == 5:
         if ball_delay <= 0:
             ball_delay = 10*random.randint(20, 30)
@@ -1472,9 +1578,9 @@ def spawn_enemies_by_level():
             if random.randint(1, 2) == 1: laser_delay = 10*10
         if log_delay <= 0:
             spawn_log()
-            log_delay = 10*random.randint(50, 100)
+            log_delay = 10*random.randint(30, 60)
             for i in range(random.randint(0, 0)): spawn_log()
-            if random.randint(1, 5) == 1: log_delay = 10*10
+            if random.randint(1, 2) == 1: log_delay = 10*10
     
     if game_level == 7:
         if ball_delay <= 0 and False:
@@ -1507,10 +1613,49 @@ def spawn_enemies_by_level():
         if laser_delay <= 0 and False:
             laser_delay = 10*random.randint(1, 1)
             for i in range(random.randint(0, 0)): spawn_laser()
-            if random.randint(1, 2) == 1: spawn_laser()
+            if random.randint(1, 3) == 1: spawn_laser()
         if log_delay <= 0 and False:
             log_delay = 10*random.randint(50, 200)
             for i in range(random.randint(1, 1)): spawn_log()
+    if game_level == 9:
+        if ball_delay <= 0 and False:
+            ball_delay = 10*random.randint(1, 1)
+            for i in range(random.randint(0, 0)): spawn_ball()
+            if random.randint(1, 3) == 1: spawn_ball()
+        if tball_delay <= 0:
+            tball_delay = 10*random.randint(10, 10)
+            for i in range(random.randint(0, 0)): spawn_tball()
+            if random.randint(1, 3) == 1: spawn_tball()
+        if vball_delay <= 0:
+            vball_delay = 10*random.randint(10, 10)
+            for i in range(random.randint(1, 2)): spawn_vball()
+        if laser_delay <= 0 and False:
+            laser_delay = 10*random.randint(1, 1)
+            for i in range(random.randint(0, 0)): spawn_laser()
+            if random.randint(1, 3) == 1: spawn_laser()
+        if log_delay <= 0:
+            log_delay = 10*random.randint(30, 50)
+            for i in range(random.randint(1, 1)): spawn_log()
+            if random.randint(1, 5) != 1: log_delay = 10*20
+    if game_level == 10:
+        if ball_delay <= 0 and False:
+            ball_delay = 10*random.randint(1, 1)
+            for i in range(random.randint(0, 0)): spawn_ball()
+            if random.randint(1, 3) == 1: spawn_ball()
+        if tball_delay <= 0 and False:
+            tball_delay = 10*random.randint(50, 100)
+            for i in range(random.randint(3, 4)): spawn_tball()
+        if vball_delay <= 0 and False:
+            vball_delay = 10*random.randint(50, 100)
+            for i in range(random.randint(2, 3)): spawn_vball()
+        if laser_delay <= 0:
+            laser_delay = 10*random.randint(1, 1)
+            for i in range(random.randint(0, 0)): spawn_laser()
+            if random.randint(1, 5) == 1: spawn_laser()
+        if log_delay <= 0:
+            log_delay = 10*random.randint(10, 30)
+            for i in range(random.randint(1, 1)): spawn_log()
+            if random.randint(1, 5) == 1: log_delay = 10*1
 
 
 def is_collision(
@@ -1752,6 +1897,21 @@ def _try_add_enemy(enemy) -> bool:
     return True
 
 
+def award_score_for_ticks(
+    current_score: int,
+    tick_accumulator: float,
+    hp: int,
+    delta_time: float,
+    ticks_per_second: int
+) -> Tuple[int, float]:
+    """경과한 게임 틱마다 남은 HP만큼 점수를 더합니다."""
+    tick_accumulator += max(0.0, delta_time) * ticks_per_second
+    while tick_accumulator >= 1.0:
+        current_score += max(0, hp)
+        tick_accumulator -= 1.0
+    return current_score, tick_accumulator
+
+
 CLEAR_RANKS = ("Perfect", "Great", "Good", "Passed")
 
 
@@ -1767,10 +1927,10 @@ def get_clear_rank(hp: int, clear_score: float) -> str:
 
 
 def save_game_data() -> None:
-    """최고 기록과 레벨별 클리어 통계를 JSON 파일에 저장합니다."""
+    """진행률, 점수, 시도 횟수와 클리어 통계를 JSON에 저장합니다."""
     global save_dirty, last_save_time
     data = {
-        "version": 2,
+        "version": 3,
         "game_level": game_level,
         "score_record": score_record,
         "level_stats": level_stats
@@ -1827,6 +1987,24 @@ def load_game_data() -> None:
             clear_count = stats.get("clear_count", 0)
             if isinstance(clear_count, int) and not isinstance(clear_count, bool):
                 level_stats[index]["clear_count"] = max(0, clear_count)
+            for key in ("best_progress", "best_score", "last_score", "total_attempts"):
+                value = stats.get(key, 0)
+                if key == "total_attempts":
+                    if isinstance(value, int) and not isinstance(value, bool):
+                        level_stats[index][key] = max(0, value)
+                elif key in ("best_score", "last_score"):
+                    if isinstance(value, int) and not isinstance(value, bool):
+                        level_stats[index][key] = max(0, value)
+                elif (
+                    isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    and math.isfinite(value)
+                ):
+                    level_stats[index][key] = max(0, min(100, value))
+            level_stats[index]["best_progress"] = max(
+                level_stats[index]["best_progress"],
+                score_record[index]
+            )
             level_stats[index]["cleared"] = (
                 level_stats[index]["clear_count"] > 0
                 or stats.get("cleared") is True
@@ -1836,6 +2014,11 @@ def load_game_data() -> None:
                 level_stats[index]["best_clear_rank"] = rank
             elif level_stats[index]["cleared"]:
                 level_stats[index]["best_clear_rank"] = "Passed"
+    for index in range(MAX_LEVEL):
+        level_stats[index]["best_progress"] = max(
+            level_stats[index]["best_progress"],
+            score_record[index]
+        )
 
 
 score_record = [0] * MAX_LEVEL
@@ -1843,7 +2026,11 @@ level_stats = [
     {
         "cleared": False,
         "clear_count": 0,
-        "best_clear_rank": "Not cleared"
+        "best_clear_rank": "Not cleared",
+        "best_progress": 0.0,
+        "best_score": 0,
+        "last_score": 0,
+        "total_attempts": 0
     }
     for _ in range(MAX_LEVEL)
 ]
@@ -1854,6 +2041,14 @@ load_game_data()
 
 
 # 게임이 끝나거나 재시작될 때까지 레벨별 상태를 초기화합니다.
+session_attempt_count = 0
+session_best_score = 0
+session_best_progress = 0.0
+attempt_best_progress = 0.0
+score_tick_accumulator = 0.0
+record_flash_remaining = 0.0
+session_record_flash_triggered = False
+attempt_record_baseline = 0.0
 show_home = True
 game_state = STATE_HOME
 clock = pygame.time.Clock()
@@ -1875,6 +2070,7 @@ while should_restart:
         game_level = max(1, min(MAX_LEVEL, game_level))
         selected_level = game_level - 1
         preview_level = selected_level
+        preview_track_duration_seconds = get_track_duration_seconds(preview_level)
         enemies = []
         ball_delay = tball_delay = vball_delay = laser_delay = log_delay = 0
         hit_count = [0, 0, 0, 0, 0]
@@ -1906,12 +2102,12 @@ while should_restart:
                     # 테스트 시 F6으로 보스 단계 잠금 상태를 임시 전환합니다(저장 파일에는 반영하지 않음).
                     if event.key == pygame.K_F6:
                         debug_boss_unlock_override = not is_boss_level_unlocked()
-                    elif event.key == pygame.K_UP and transition_elapsed >= transition_duration:
+                    elif event.key == pygame.K_UP:
                         if selected_level > 0:
                             selected_level -= 1
                             transition_elapsed = 0.0
                             transition_switched = False
-                    elif event.key == pygame.K_DOWN and transition_elapsed >= transition_duration:
+                    elif event.key == pygame.K_DOWN:
                         if selected_level < MAX_LEVEL - 1:
                             selected_level += 1
                             transition_elapsed = 0.0
@@ -1922,6 +2118,12 @@ while should_restart:
                             and not is_level_locked(selected_level)
                         ):
                             game_level = selected_level + 1
+                            session_attempt_count = 0
+                            session_best_score = 0
+                            session_best_progress = 0.0
+                            attempt_best_progress = 0.0
+                            session_record_flash_triggered = False
+                            record_flash_remaining = 0.0
                             save_dirty = True
                             save_game_data()
                             start_game = True
@@ -1937,6 +2139,7 @@ while should_restart:
                 )
                 if not transition_switched and transition_elapsed >= transition_duration / 2:
                     preview_level = selected_level
+                    preview_track_duration_seconds = get_track_duration_seconds(preview_level)
                     game_level = preview_level + 1
                     pygame.mixer.music.stop()
                     preview_was_locked = is_level_locked(preview_level)
@@ -2017,7 +2220,11 @@ while should_restart:
                 fade_alpha = round(
                     255 * math.sin(math.pi * transition_elapsed / transition_duration)
                 )
-            draw_home_menu(selected_level, fade_alpha)
+            draw_home_menu(
+                selected_level,
+                fade_alpha,
+                preview_track_duration_seconds
+            )
             pygame.display.update()
 
         pygame.mixer.music.stop()
@@ -2046,16 +2253,28 @@ while should_restart:
     game_state = STATE_PLAY
     hitbox = False
     score = 0
-    run_best_score = 0.0
+    progress = 0.0
     clock = pygame.time.Clock()
     tps = 60
-    cooltime_power = 1/3
-    restart_cooltime = tps*2*cooltime_power
+    restart_hold_seconds = 0.0
+    attempt_finalized = False
 
 
     music_finish = False
     game_level = max(1, min(MAX_LEVEL, game_level))
+    level_index = game_level - 1
+    attempt_record_baseline = max(
+        score_record[level_index],
+        level_stats[level_index]["best_progress"]
+    )
     session_id = uuid.uuid4().hex[:12].upper()
+    session_attempt_count += 1
+    attempt_best_progress = 0.0
+    score_tick_accumulator = 0.0
+    record_flash_remaining = 0.0
+    session_record_flash_triggered = False
+    level_stats[game_level - 1]["total_attempts"] += 1
+    save_dirty = True
     music_path = MUSIC_TRACKS[game_level - 1]
     pygame.mixer.music.load(music_path)
     game_sound = pygame.mixer.Sound(music_path)
@@ -2072,10 +2291,14 @@ while should_restart:
     # 한 판의 게임 진행과 화면 갱신을 처리하는 메인 루프입니다.
     while is_running:
         frame_delta_time = min(clock.get_time() / 1000.0, 0.05)
+        record_flash_remaining = max(
+            0.0,
+            record_flash_remaining - frame_delta_time
+        )
         if pause:
             game_state = STATE_PAUSE
         keys = pygame.key.get_pressed()
-        # ESC를 눌렀다 놓으면 일시정지, 2초 유지하면 홈으로 돌아갑니다.
+        # ESC를 눌렀다 놓으면 일시정지, 1초 유지하면 홈으로 돌아갑니다.
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 is_running = False
@@ -2103,13 +2326,14 @@ while should_restart:
                 music_finish = True
                 pause = True
                 game_state = STATE_PAUSE
-                score = 100
-                run_best_score = max(run_best_score, score)
                 level_index = game_level - 1
                 if player.hp > 0:
+                    progress = 100.0
+                    attempt_best_progress = max(attempt_best_progress, progress)
+                    session_best_progress = max(session_best_progress, progress)
                     level_stats[level_index]["cleared"] = True
                     level_stats[level_index]["clear_count"] += 1
-                    clear_rank = get_clear_rank(player.hp, score)
+                    clear_rank = get_clear_rank(player.hp, progress)
                     previous_rank = level_stats[level_index]["best_clear_rank"]
                     if (
                         previous_rank not in CLEAR_RANKS
@@ -2117,9 +2341,12 @@ while should_restart:
                     ):
                         level_stats[level_index]["best_clear_rank"] = clear_rank
                     save_dirty = True
-                if player.hp > 0 and score > score_record[level_index]:
-                    score_record[level_index] = score
-                    save_dirty = True
+                    if update_level_records(level_index, progress, score):
+                        if not session_record_flash_triggered:
+                            record_flash_remaining = RECORD_FLASH_DURATION
+                            session_record_flash_triggered = True
+                level_stats[level_index]["last_score"] = score
+                attempt_finalized = True
                 save_game_data()
 
         if pause:
@@ -2133,20 +2360,36 @@ while should_restart:
             if esc_hold_seconds >= ESC_HOME_HOLD_SECONDS:
                 show_home = True
                 game_state = STATE_HOME
+                if not attempt_finalized:
+                    level_stats[game_level - 1]["last_score"] = score
+                    attempt_finalized = True
+                    save_dirty = True
                 save_game_data()
                 is_running = False
                 should_restart = True
 
+        if pause and player.hp <= 0 and not attempt_finalized:
+            level_stats[game_level - 1]["last_score"] = score
+            attempt_finalized = True
+            save_dirty = True
+
         if game_state == STATE_PLAY:
             player_move(player, keys)
-        
+
         if keys[pygame.K_r] or keys[pygame.K_SPACE]:
-            restart_cooltime -= 1
-            if restart_cooltime <= 0:
+            restart_hold_seconds = min(
+                RESTART_HOLD_SECONDS,
+                restart_hold_seconds + frame_delta_time
+            )
+            if restart_hold_seconds >= RESTART_HOLD_SECONDS:
+                if not attempt_finalized:
+                    level_stats[game_level - 1]["last_score"] = score
+                    attempt_finalized = True
+                    save_dirty = True
                 is_running = False
                 should_restart = True
         else:
-            restart_cooltime = tps*2*cooltime_power
+            restart_hold_seconds = 0.0
         if game_state == STATE_PAUSE:
             pygame.mixer.music.pause()
             dis.fill(DARK_GRAY)
@@ -2176,7 +2419,7 @@ while should_restart:
             level_index = game_level - 1
             current_stats = level_stats[level_index]
             current_rank = (
-                get_clear_rank(max(player.hp, 0), score)
+                get_clear_rank(max(player.hp, 0), progress)
                 if music_finish
                 else "Not cleared" if player.hp <= 0
                 else "In progress"
@@ -2189,9 +2432,11 @@ while should_restart:
                 (f"[SESSION_ID] {session_id}", terminal_color),
                 ("[STATE]      PAUSED", (236, 196, 112)),
                 ("[SESSION_DATA] ------------------------------", label_color),
-                (f"[SCORE]      {score:07.2f}%", terminal_color),
-                (f"[PROGRESS]   {score:07.2f}% -> 100.00%", terminal_color),
-                (f"[RUN_BEST]   {run_best_score:07.2f}%", terminal_color),
+                (f"[SCORE]      {score:07d}", terminal_color),
+                (f"[PROGRESS]   {progress:06.2f}% -> {attempt_best_progress:06.2f}%", terminal_color),
+                (f"[TIME]       {format_track_time(game_sound.get_length())}", terminal_color),
+                (f"[RUN_BEST]   {session_best_progress:06.2f}%", terminal_color),
+                (f"[ATTEMPT]    {session_attempt_count:04d}", terminal_color),
                 (f"[HP]         {max(player.hp, 0)} / 3", terminal_color),
                 (f"[DAMAGE]     {max(0, 3 - player.hp)}", terminal_color),
                 (f"[COLLISIONS] {sum(hit_count)}", terminal_color),
@@ -2216,16 +2461,24 @@ while should_restart:
                 ("[TRACK_METADATA]", label_color),
                 (f"[MAP]       {LEVEL_NAMES[level_index]}", terminal_color),
                 (f"[ARTIST]    {LEVEL_CREATORS[level_index]}", terminal_color),
+                (f"[DURATION]  {format_track_time(game_sound.get_length())}", terminal_color),
                 (f"[TRACK_ID]  {track_hash}", terminal_color),
                 ("[RECORDS]   ------------------------------", label_color),
-                (f"[ALL_TIME]  {score_record[level_index]:07.2f}%", terminal_color),
+                (f"[ALL_BEST]  {current_stats['best_progress']:06.2f}%", terminal_color),
+                (f"[BEST_SCORE] {current_stats['best_score']:07d}", terminal_color),
+                (f"[FINAL_SCORE] {current_stats['last_score']:07d}", terminal_color),
+                (f"[TOTAL_ATTEMPT] {current_stats['total_attempts']:04d}", terminal_color),
                 (f"[CLEARS]    {current_stats['clear_count']:04d}", terminal_color),
                 (f"[STATUS]    {run_status}", GREEN if current_stats["cleared"] else terminal_color),
                 (f"[RUN_RANK]  {current_rank.upper()}", terminal_color),
                 (f"[BEST_RANK] {current_stats['best_clear_rank'].upper()}", terminal_color),
                 ("[AUDIO_DEBUG] ------------------------------", label_color),
                 (f"[MIX_RATE]  {mixer_info[0] if mixer_info else 'N/A'} Hz", terminal_color),
-                (f"[ONSETS]    {len(MAIN_RHYTHM_ONSETS[level_index]):06d}", terminal_color),
+                (
+                    f"[ONSETS]    "
+                    f"{len(MAIN_RHYTHM_ONSETS[level_index]) if level_index < MAIN_RHYTHM_TRACK_COUNT else 0:06d}",
+                    terminal_color
+                ),
                 ("[MEMORY]    sampler=disabled", (155, 164, 170)),
             )
             for row, (line, color) in enumerate(run_log_lines):
@@ -2249,7 +2502,7 @@ while should_restart:
                 )
             draw_ui_text(
                 pause_dis,
-                "[ESC] HOLD 2.0s -> MAP SELECT  |  [ESC] TAP -> RESUME",
+                "[ESC] HOLD 1.0s -> MAP SELECT  |  [ESC] TAP -> RESUME",
                 (180, 193, 203),
                 (display_size[0] // 2, display_size[1] - 44),
                 13,
@@ -2283,7 +2536,7 @@ while should_restart:
                     40,
                     center=True
                 )
-            restart_hold_progress = 1.0 - restart_cooltime / (tps * 2 * cooltime_power)
+            restart_hold_progress = restart_hold_seconds / RESTART_HOLD_SECONDS
             if restart_hold_progress > 0.0:
                 draw_hold_gauge(
                     pause_dis,
@@ -2314,24 +2567,66 @@ while should_restart:
             onset_blend = 1.0 - math.exp(-18.0 * delta_time)
             onset_envelope += (onset_strength / 255.0 - onset_envelope) * onset_blend
 
+            score, score_tick_accumulator = award_score_for_ticks(
+                score,
+                score_tick_accumulator,
+                player.hp,
+                delta_time,
+                tps
+            )
+            session_best_score = max(session_best_score, score)
+
+            track_duration = max(game_sound.get_length(), 0.001)
+            progress = min(100.0, music_position_ms / (track_duration * 10.0))
+            level_index = game_level - 1
+            is_beating_all_best = (
+                player.hp > 0
+                and progress > attempt_record_baseline
+            )
+            if player.hp > 0:
+                attempt_best_progress = max(attempt_best_progress, progress)
+                session_best_progress = max(session_best_progress, progress)
+                new_progress_record = update_level_records(
+                    level_index,
+                    progress,
+                    score
+                )
+                if new_progress_record and not session_record_flash_triggered:
+                    record_flash_remaining = RECORD_FLASH_DURATION
+                    session_record_flash_triggered = True
+            flash_strength = (
+                record_flash_remaining / RECORD_FLASH_DURATION
+            ) ** 2
+            if not is_beating_all_best:
+                flash_strength = 0.0
+
             # 배경, 음높이·온셋 반응 도형, 좌우 스펙트럼, 보드 순서로 그립니다.
             dis.fill(DARK_GRAY)
             draw_main_rhythm_polygon(
                 melody_pitch,
                 onset_envelope * 255.0,
-                music_position_ms
+                music_position_ms,
+                flash_strength
             )
-            draw_spectrum_bars(spectrum_levels)
+            draw_spectrum_bars(spectrum_levels, flash_strength)
             draw_board()
             
-            # 음악 재생 시간을 진행률로 표시하고 최고 기록을 갱신합니다.
-            score = music_position_ms/game_sound.get_length()/10
-            run_best_score = max(run_best_score, score)
-            if player.hp > 0 and score > score_record[game_level-1]:
-                score_record[game_level-1] = score
-                save_dirty = True
-            draw_ui_text(dis, f"{round(score, 2)}%", WHITE, (10, 10))
-            restart_hold_progress = 1.0 - restart_cooltime / (tps * 2 * cooltime_power)
+            draw_ui_text(dis, f"{progress:.2f}%", WHITE, (10, 10))
+            draw_ui_text(dis, f"SCORE {score}", WHITE, (10, 34), 16)
+            elapsed_seconds = min(
+                track_duration,
+                max(0.0, music_position_ms / 1000.0)
+            )
+            draw_ui_text(
+                dis,
+                f"TIME {format_track_time(elapsed_seconds)} / {format_track_time(track_duration)}",
+                LIGHT_GRAY,
+                (10, 54),
+                15
+            )
+            if is_beating_all_best:
+                dis.blit(CROWN_IMAGE, (94, 8))
+            restart_hold_progress = restart_hold_seconds / RESTART_HOLD_SECONDS
             if restart_hold_progress > 0.0:
                 draw_hold_gauge(
                     dis,
@@ -2370,6 +2665,10 @@ while should_restart:
 
         pygame.display.update()
         clock.tick(tps)
+    if not attempt_finalized:
+        level_stats[game_level - 1]["last_score"] = score
+        attempt_finalized = True
+        save_dirty = True
     pygame.mixer.music.set_endevent()
     pygame.mixer.music.stop()
     if save_dirty or not is_running:

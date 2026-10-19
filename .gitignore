@@ -220,4 +220,4 @@ __marimo__/
 .streamlit/secrets.toml
 
 # 7x7 Custom Data
-7x7_data.json
+7x7_initdata.json

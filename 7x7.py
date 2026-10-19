@@ -51,6 +51,8 @@ MUSIC_8 = "music/NyanCat.mp3"
 MUSIC_9 = "music/TheWorldRevolvong.mp3"
 MUSIC_10 = "music/Megalovania.mp3"
 MAX_LEVEL = 10
+GAME_DATA_VERSION = 1
+MAIN_RHYTHM_DATA_VERSION = 1
 BOSS_LEVEL_INDICES = (5, MAX_LEVEL - 1)
 BOSS_6_UNLOCK_REQUIRED_PROGRESS = 30.0
 BOSS_10_UNLOCK_REQUIRED_LEVEL_INDEX = 8
@@ -115,7 +117,7 @@ SPECTRUM_BAND_COUNT = main_rhythm_data["frequency_bands"]
 FEATURE_STRIDE = SPECTRUM_BAND_COUNT + 2
 MAIN_RHYTHM_TRACK_COUNT = len(MAIN_RHYTHM_TRACKS)
 if (
-    main_rhythm_data.get("version") != 3
+    main_rhythm_data.get("version") != MAIN_RHYTHM_DATA_VERSION
     or not isinstance(MAIN_RHYTHM_SAMPLE_INTERVAL, (int, float))
     or not math.isfinite(MAIN_RHYTHM_SAMPLE_INTERVAL)
     or MAIN_RHYTHM_SAMPLE_INTERVAL <= 0
@@ -1950,7 +1952,7 @@ def save_game_data() -> None:
     """진행률, 점수, 시도 횟수와 클리어 통계를 JSON에 저장합니다."""
     global save_dirty, last_save_time
     data = {
-        "version": 3,
+        "version": GAME_DATA_VERSION,
         "game_level": game_level,
         "score_record": score_record,
         "level_stats": level_stats

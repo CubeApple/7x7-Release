@@ -14,13 +14,17 @@ from functools import lru_cache
 
 pygame.init()
 
-# 보드 크기만 줄이고 창 해상도는 1200x900으로 유지합니다.
+# ============================================================================
+# 기본 화면·보드 설정: 보드 크기나 이동 속도를 조정할 때 이 구역을 확인하세요.
+# ============================================================================
+# 보드 칸 수를 바꾸면 스폰 위치·충돌 범위 계산에도 영향을 줍니다.
 GRID_SIZE = 7
 ELEMENT_SCALE = 0.88
 CELL_SIZE = round(100 * ELEMENT_SCALE)
 BOARD_HALF_SIZE = GRID_SIZE * CELL_SIZE // 2
 GRID_EDGE_OFFSET = (GRID_SIZE - 1) * CELL_SIZE // 2
-# 이동 마지막 프레임에 속도를 반전하므로 실제 이동량은 속도 × (프레임 수 - 2)입니다.
+# 이동 시간은 프레임 수, 이동 속도는 칸 간격을 이 시간에 나눈 값입니다.
+# 마지막 프레임 속도 반전 때문에 실제 이동량 계산에서 2프레임을 제외합니다.
 MOVE_DURATION = 12
 NORMAL_MOVE_SPEED = CELL_SIZE / (MOVE_DURATION - 2)
 WRAP_MOVE_SPEED = CELL_SIZE * (GRID_SIZE - 1) / (MOVE_DURATION - 2)
@@ -53,6 +57,7 @@ MUSIC_10 = "music/Megalovania.mp3"
 MAX_LEVEL = 10
 GAME_DATA_VERSION = 1
 MAIN_RHYTHM_DATA_VERSION = 1
+# 0부터 세는 레벨 인덱스입니다. 6·10레벨 보스 해금 조건에서 사용합니다.
 BOSS_LEVEL_INDICES = (5, MAX_LEVEL - 1)
 BOSS_6_UNLOCK_REQUIRED_PROGRESS = 30.0
 BOSS_10_UNLOCK_REQUIRED_LEVEL_INDEX = 8
@@ -81,6 +86,7 @@ LEVEL_CREATORS = (
     "Toby Fox",
     "Toby Fox",
 )
+# 게임 화면 상태: 홈/플레이/일시정지는 이벤트 처리와 업데이트 흐름을 구분합니다.
 STATE_HOME = "home"
 STATE_PLAY = "play"
 STATE_PAUSE = "pause"
@@ -88,7 +94,9 @@ debug_boss_unlock_overrides = {}
 game_sound = pygame.mixer.Sound(MUSIC_1)
 TRACK_DURATION_SECONDS = {0: game_sound.get_length()}
 
-
+# ----------------------------------------------------------------------------
+# 음악 길이·분석 데이터: 시각 효과가 음악 재생 위치에 맞춰 움직이게 합니다.
+# ----------------------------------------------------------------------------
 def get_track_duration_seconds(level_index: int) -> float:
     """맵별 음악 길이를 한 번 읽어 캐시합니다."""
     if level_index not in TRACK_DURATION_SECONDS:
@@ -116,6 +124,8 @@ MAIN_RHYTHM_ONSETS = main_rhythm_data["onsets"]
 SPECTRUM_BAND_COUNT = main_rhythm_data["frequency_bands"]
 FEATURE_STRIDE = SPECTRUM_BAND_COUNT + 2
 MAIN_RHYTHM_TRACK_COUNT = len(MAIN_RHYTHM_TRACKS)
+# 한 프레임의 데이터는 [음높이, 온셋 강도, 주파수 대역...] 순서로 저장됩니다.
+# 아래 검사는 음악 데이터와 코드의 필드 수·곡 순서가 맞는지 시작 시 확인합니다.
 if (
     main_rhythm_data.get("version") != MAIN_RHYTHM_DATA_VERSION
     or not isinstance(MAIN_RHYTHM_SAMPLE_INTERVAL, (int, float))
@@ -154,6 +164,9 @@ if (
 ):
     raise ValueError("음악 시각화 데이터의 형식이 올바르지 않습니다.")
 
+# ============================================================================
+# 화면 연출·조작·장애물 타이밍 설정: 플레이 감각 조정은 이 상수부터 확인하세요.
+# ============================================================================
 SPECTRUM_BAR_MAX_LENGTH = 92
 SPECTRUM_BAR_HEIGHT = 7
 SPECTRUM_BAR_TOP = 148
@@ -171,8 +184,11 @@ ESC_PAUSE_TAP_SECONDS = 0.2
 HOLD_GAUGE_SIZE = (190, 9)
 RECORD_FLASH_DURATION = 1.0
 BOMB_CHARGE_SECONDS = 1.8
-BOMB_CHAIN_DELAY_SECONDS = 0.3
-BOMB_DAMAGE_WINDOW_SECONDS = 0.3
+# 같은 거리의 연쇄 칸은 동시에 터지고, 다음 거리 웨이브까지 기다리는 시간입니다.
+BOMB_CHAIN_DELAY_SECONDS = 0.15
+# 메인·서브 폭탄 각각의 폭발 애니메이션 및 해당 칸 피격 판정 지속 시간입니다.
+BOMB_DAMAGE_WINDOW_SECONDS = 0.35
+# 프레임 차이에 따른 타이밍 오차를 줄이는 폭탄 전용 고정 업데이트 간격입니다.
 BOMB_SIMULATION_STEP = 1.0 / 120.0
 BOMB_SHAPE_SIZE = round(CELL_SIZE * 0.72)
 ENEMY_HITBOX_SIZE = round(40 * ELEMENT_SCALE)
@@ -219,6 +235,9 @@ CROWN_IMAGE = pygame.transform.smoothscale(
 )
 
 
+# ----------------------------------------------------------------------------
+# 음악 반응 효과: 재생 위치에서 음높이·온셋·주파수 대역을 계산합니다.
+# ----------------------------------------------------------------------------
 def get_music_visual_features(playback_ms: int, level: int) -> Tuple[float, float, Tuple[float, ...]]:
     """현재 음악 시점의 음높이, 온셋, 주파수 대역을 부드럽게 보간합니다."""
     if level > MAIN_RHYTHM_TRACK_COUNT:
@@ -359,6 +378,9 @@ def draw_spectrum_bars(levels: Sequence[float], record_flash: float = 0.0) -> No
     dis.blit(visual_effect_layer, (0, 0))
 
 
+# ----------------------------------------------------------------------------
+# 레벨 진행·기록: 진행률, 보스 해금, 홈 화면 정보를 계산합니다.
+# ----------------------------------------------------------------------------
 def update_level_records(level_index: int, progress: float, current_score: int) -> bool:
     """현재 기록을 통산 최고 진행률/점수에 반영하고 진행률 신기록 여부를 반환합니다."""
     global save_dirty
@@ -546,6 +568,9 @@ def draw_home_menu(
         dis.blit(home_fade_surface, (0, 0))
 
 
+# ----------------------------------------------------------------------------
+# 공통 텍스트·UI 도구: 폰트나 UI 위치를 바꿀 때 이 구역을 확인하세요.
+# ----------------------------------------------------------------------------
 class Text:
     """mining.py와 같은 데이터 형식으로 글자를 만들고 원하는 위치에 그립니다."""
 
@@ -783,6 +808,9 @@ def set_alpha(
     return (color[0], color[1], color[2], min(255, max(0, int(alpha))))
 
 
+# ----------------------------------------------------------------------------
+# 장애물 업데이트: 이동 중 장애물 갱신, 삭제 및 충돌을 한 프레임 처리합니다.
+# ----------------------------------------------------------------------------
 def update_enemies():
     global enemies, hit_count, hit_stack
     if enemies:
@@ -804,6 +832,9 @@ def update_enemies():
 
 
 
+# ----------------------------------------------------------------------------
+# 플레이어 이동·체력: 입력 이동, 무적 프레임, 피격 대기 시간을 관리합니다.
+# ----------------------------------------------------------------------------
 class Player(object):
     def __init__(
         self,
@@ -947,6 +978,10 @@ def player_move(
         return
 
 
+# ----------------------------------------------------------------------------
+# 장애물 종류별 동작: 각 클래스는 해당 장애물의 이동·그리기 로직을 담당합니다.
+# 생성 주기와 레벨별 출현 빈도는 아래 spawn_enemies_by_level()에서 조절합니다.
+# ----------------------------------------------------------------------------
 class Ball(object):
     def configure(
         self,
@@ -1351,6 +1386,7 @@ class Laser(object):
 class Bomb:
     """맵에 직접 생성되어 충전한 뒤 서브 폭탄 파동을 시작하는 메인 폭탄입니다."""
 
+    # 로마 숫자 인덱스와 chain_range(0~3)의 순서를 맞춥니다.
     ROMAN_RANGES = ("I", "II", "III", "IV")
 
     def configure(
@@ -1418,7 +1454,7 @@ class Bomb:
             self.state = "done"
 
     def _prepare_chain(self) -> None:
-        """모든 연쇄 타일을 거리순으로 한 번만 계산해 메인 폭탄에 저장합니다."""
+        """거리별 연쇄 타일을 미리 예약해 서브 폭탄의 무한 재연쇄를 막습니다."""
         chain_cells = get_bomb_chain_cells(
             self.row,
             self.column,
@@ -1433,6 +1469,7 @@ class Bomb:
             self._add_sub_bomb(
                 target_row,
                 target_column,
+                # 1칸 거리 웨이브는 즉시, 이후 웨이브는 설정 간격만큼 늦춥니다.
                 (distance - 1) * BOMB_CHAIN_DELAY_SECONDS
             )
 
@@ -1520,6 +1557,7 @@ class SubBomb:
         self.row = row
         self.column = column
         self.diagonal_chain = diagonal_chain
+        # 이 지연은 폭발까지 남은 시간이며 같은 거리의 서브 폭탄에는 같은 값이 들어갑니다.
         self.trigger_delay = max(0.0, trigger_delay)
         self.state = "waiting"
         self.explosion_remaining = 0.0
@@ -1629,11 +1667,12 @@ def _draw_bomb_explosion(
     position: Tuple[int, int],
     remaining_seconds: float
 ) -> None:
-    """폭발 표면을 시계 방향으로 회전시키며 0.5초 동안 완전히 축소합니다."""
+    """폭발 표면을 회전 없이 부풀렸다가 설정된 시간 동안 축소합니다."""
     progress = max(
         0.0,
         min(1.0, 1.0 - remaining_seconds / BOMB_DAMAGE_WINDOW_SECONDS)
     )
+    # 전체 폭발 애니메이션의 앞 20% 동안 커지고, 나머지 80% 동안 작아집니다.
     swell_progress = 0.2
     if progress <= swell_progress:
         scale = 1.0 + 0.45 * progress / swell_progress
@@ -1642,13 +1681,12 @@ def _draw_bomb_explosion(
         scale = 1.45 * (1.0 - shrink_progress)
     if scale <= 0.02:
         return
-    rotated = pygame.transform.rotate(canvas, -1080.0 * progress)
     scaled_size = max(1, round(BOMB_SHAPE_SIZE * scale))
-    rotated = pygame.transform.smoothscale(
-        rotated,
+    scaled = pygame.transform.smoothscale(
+        canvas,
         (scaled_size, scaled_size)
     )
-    dis.blit(rotated, rotated.get_rect(center=position))
+    dis.blit(scaled, scaled.get_rect(center=position))
 
 
 def get_bomb_chain_cells(
@@ -1657,7 +1695,7 @@ def get_bomb_chain_cells(
     chain_range: int,
     diagonal_chain: bool
 ) -> List[Tuple[int, int, int]]:
-    """중심을 제외하고 십자 또는 대각 십자 방향의 유효 칸만 반환합니다."""
+    """(행, 열, 거리) 목록을 거리순으로 반환해 같은 거리 웨이브를 동시에 처리합니다."""
     directions = (
         ((-1, -1), (-1, 1), (1, -1), (1, 1))
         if diagonal_chain
@@ -1877,18 +1915,23 @@ def spawn_bomb() -> bool:
 
 
 def spawn_enemies_by_level() -> None:
-    """현재 레벨의 장애물 생성 규칙과 폭탄 지연 스폰을 처리합니다."""
+    """현재 레벨의 장애물 생성 규칙을 실행합니다.
+
+    레벨마다 독립된 bomb_delay 조건을 사용하므로 폭탄 출현 간격은 각 레벨
+    블록 안의 대기 범위만 바꾸면 조정할 수 있습니다. delay는 100/tps씩
+    감소하므로 10 * randint(a, b)는 대략 a*0.1~b*0.1초 간격입니다.
+    """
     global ball_delay, tball_delay, vball_delay, laser_delay, log_delay, bomb_delay
     if game_level == 1:
-        if ball_delay <= 0 and False:
+        if ball_delay <= 0:
             spawn_ball()
             ball_delay = 10*random.randint(10, 30)
             for i in range(random.randint(0, 3)): spawn_ball()
-        if tball_delay <= 0 and False:
+        if tball_delay <= 0:
             spawn_tball()
             tball_delay = 10*random.randint(40, 70)
             for i in range(random.randint(0, 0)): spawn_tball()
-        if vball_delay <= 0 and False:
+        if vball_delay <= 0:
             spawn_vball()
             vball_delay = 10*random.randint(20, 30)
             for i in range(random.randint(0, 2)): spawn_vball()
@@ -1900,7 +1943,7 @@ def spawn_enemies_by_level() -> None:
             spawn_log()
             log_delay = 10*random.randint(10, 20)
             for i in range(random.randint(0, 0)): spawn_log()
-        if bomb_delay <= 0:
+        if bomb_delay <= 0 and False:
             spawn_bomb()
             bomb_delay = 10*random.randint(40, 40)
     if game_level == 2:
@@ -1924,7 +1967,7 @@ def spawn_enemies_by_level() -> None:
             spawn_log()
             log_delay = 10*random.randint(10, 20)
             for i in range(random.randint(0, 0)): spawn_log()
-        if bomb_delay <= 0:
+        if bomb_delay <= 0 and False:
             spawn_bomb()
             bomb_delay = 10*random.randint(300, 400)
     if game_level == 3:
@@ -1947,7 +1990,7 @@ def spawn_enemies_by_level() -> None:
             spawn_log()
             log_delay = 10*random.randint(10, 20)
             for i in range(random.randint(0, 0)): spawn_log()
-        if bomb_delay <= 0:
+        if bomb_delay <= 0 and False:
             spawn_bomb()
             bomb_delay = 10*random.randint(250, 350)
     if game_level == 4:
@@ -1971,7 +2014,7 @@ def spawn_enemies_by_level() -> None:
             log_delay = 10*random.randint(50, 100)
             for i in range(random.randint(0, 0)): spawn_log()
             if random.randint(1, 4) == 1: log_delay = 10*10
-        if bomb_delay <= 0:
+        if bomb_delay <= 0 and False:
             spawn_bomb()
             bomb_delay = 10*random.randint(220, 300)
     if game_level == 5:
@@ -1993,7 +2036,7 @@ def spawn_enemies_by_level() -> None:
             spawn_log()
             log_delay = 10*random.randint(10, 20)
             for i in range(random.randint(0, 0)): spawn_log()
-        if bomb_delay <= 0:
+        if bomb_delay <= 0 and False:
             spawn_bomb()
             bomb_delay = 10*random.randint(180, 250)
     if game_level == 6:  # 보스맵
@@ -2016,7 +2059,7 @@ def spawn_enemies_by_level() -> None:
             log_delay = 10*random.randint(30, 60)
             for i in range(random.randint(0, 0)): spawn_log()
             if random.randint(1, 2) == 1: log_delay = 10*10
-        if bomb_delay <= 0:
+        if bomb_delay <= 0 and False:
             spawn_bomb()
             bomb_delay = 10*random.randint(100, 150)
     
@@ -2654,6 +2697,7 @@ while should_restart:
             ) * (1.0 - math.exp(-18.0 * delta_time))
 
             if not preview_locked:
+                # 각 delay 카운터는 초 단위가 아닌 프레임 보정값(100/tps)으로 줄어듭니다.
                 delay_step = 100.0 / tps
                 ball_delay -= delay_step
                 tball_delay -= delay_step
@@ -3121,6 +3165,7 @@ while should_restart:
             player.draw()
 
             # 생성 대기 시간을 줄이고 적을 생성한 뒤 움직입니다.
+            # 스폰 타이머는 설정한 delay 값을 100/tps만큼 매 프레임 감소시킵니다.
             ball_delay -= 1/tps*100
             tball_delay -= 1/tps*100
             vball_delay -= 1/tps*100

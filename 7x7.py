@@ -1,7 +1,7 @@
 import pygame
 from pygame.surface import Surface
 from pygame.color import Color
-from typing import Any, Dict, List, Tuple, Union, Sequence
+from typing import Any, Dict, List, Optional, Set, Tuple, Union, Sequence
 import random
 import math
 import base64
@@ -170,6 +170,11 @@ RESTART_HOLD_SECONDS = ESC_HOME_HOLD_SECONDS
 ESC_PAUSE_TAP_SECONDS = 0.2
 HOLD_GAUGE_SIZE = (190, 9)
 RECORD_FLASH_DURATION = 1.0
+BOMB_CHARGE_SECONDS = 1.8
+BOMB_CHAIN_DELAY_SECONDS = 0.3
+BOMB_DAMAGE_WINDOW_SECONDS = 0.3
+BOMB_SIMULATION_STEP = 1.0 / 120.0
+BOMB_SHAPE_SIZE = round(CELL_SIZE * 0.72)
 ENEMY_HITBOX_SIZE = round(40 * ELEMENT_SCALE)
 LOG_END_INSET = round(16 * ELEMENT_SCALE)
 CROWN_IMAGE_PATH = os.path.join(
@@ -1342,6 +1347,394 @@ class Laser(object):
         device_painting = _get_laser_device(self.face, hitbox)
         dis.blit(device_painting, device_painting.get_rect(center=(x, y)))
 
+
+class Bomb:
+    """맵에 직접 생성되어 충전한 뒤 서브 폭탄 파동을 시작하는 메인 폭탄입니다."""
+
+    ROMAN_RANGES = ("I", "II", "III", "IV")
+
+    def configure(
+        self,
+        row: int,
+        column: int,
+        chain_range: int,
+        diagonal_chain: bool
+    ) -> None:
+        self.row = row
+        self.column = column
+        self.chain_range = max(0, min(3, chain_range))
+        self.diagonal_chain = diagonal_chain
+        self.state = "charging"
+        self.charge_seconds = BOMB_CHARGE_SECONDS
+        self.charge_remaining = self.charge_seconds
+        self.explosion_remaining = 0.0
+        self.pos = self._get_cell_center(row, column)
+        self.sub_bombs: List[SubBomb] = []
+        self.visited_cells: Set[Tuple[int, int]] = {(row, column)}
+
+    @staticmethod
+    def _get_cell_center(row: int, column: int) -> Tuple[int, int]:
+        left = display_size[0] // 2 - BOARD_HALF_SIZE
+        top = display_size[1] // 2 - BOARD_HALF_SIZE
+        return (
+            left + column * CELL_SIZE + CELL_SIZE // 2,
+            top + row * CELL_SIZE + CELL_SIZE // 2
+        )
+
+    @property
+    def charge_progress(self) -> float:
+        if self.charge_seconds <= 0:
+            return 1.0
+        return max(
+            0.0,
+            min(1.0, 1.0 - self.charge_remaining / self.charge_seconds)
+        )
+
+    def update(self, delta_time: float, target_player) -> None:
+        """충전, 메인 폭발, 미리 정한 서브 폭탄 연쇄를 순서대로 처리합니다."""
+        delta_time = max(0.0, delta_time)
+        if self.state == "charging":
+            self._damage_player_in_blast_cell(target_player)
+            self.charge_remaining -= delta_time
+            if self.charge_remaining <= 1e-12:
+                self.state = "exploding"
+                self.explosion_remaining = BOMB_DAMAGE_WINDOW_SECONDS
+                self._prepare_chain()
+
+        elif self.state == "exploding":
+            self._damage_player_in_blast_cell(target_player)
+            self.explosion_remaining -= delta_time
+            if self.explosion_remaining <= 1e-12:
+                self.state = "chaining"
+
+        elif self.state == "chaining":
+            for sub_bomb in self.sub_bombs:
+                sub_bomb.update(delta_time, target_player)
+            self.sub_bombs = [
+                sub_bomb for sub_bomb in self.sub_bombs
+                if sub_bomb.state != "done"
+            ]
+        if self.state == "chaining" and not self.sub_bombs:
+            self.state = "done"
+
+    def _prepare_chain(self) -> None:
+        """모든 연쇄 타일을 거리순으로 한 번만 계산해 메인 폭탄에 저장합니다."""
+        chain_cells = get_bomb_chain_cells(
+            self.row,
+            self.column,
+            self.chain_range,
+            self.diagonal_chain
+        )
+        for target_row, target_column, distance in chain_cells:
+            cell = (target_row, target_column)
+            if cell in self.visited_cells:
+                continue
+            self.visited_cells.add(cell)
+            self._add_sub_bomb(
+                target_row,
+                target_column,
+                (distance - 1) * BOMB_CHAIN_DELAY_SECONDS
+            )
+
+    def _add_sub_bomb(
+        self,
+        row: int,
+        column: int,
+        trigger_delay: float
+    ) -> None:
+        sub_bomb = SubBomb()
+        sub_bomb.configure(
+            row,
+            column,
+            self.diagonal_chain,
+            trigger_delay
+        )
+        self.sub_bombs.append(sub_bomb)
+
+    def _damage_player_in_blast_cell(self, target_player) -> None:
+        if (
+            target_player is None
+            or target_player.hp <= 0
+            or target_player.hp_minus
+            or target_player.invincible
+        ):
+            return
+        left = display_size[0] // 2 - BOARD_HALF_SIZE
+        top = display_size[1] // 2 - BOARD_HALF_SIZE
+        player_column = math.floor((target_player.pos[0] - left) / CELL_SIZE)
+        player_row = math.floor((target_player.pos[1] - top) / CELL_SIZE)
+        if player_row == self.row and player_column == self.column:
+            target_player.hp_minus = True
+
+    @staticmethod
+    def _damage_player_on_cell(row: int, column: int, target_player) -> None:
+        left = display_size[0] // 2 - BOARD_HALF_SIZE
+        top = display_size[1] // 2 - BOARD_HALF_SIZE
+        player_column = math.floor((target_player.pos[0] - left) / CELL_SIZE)
+        player_row = math.floor((target_player.pos[1] - top) / CELL_SIZE)
+        if player_row == row and player_column == column:
+            target_player.hp_minus = True
+
+    def get_occupied_cells(self) -> Set[Tuple[int, int]]:
+        """현재 메인 폭탄과 활성 서브 폭탄이 차지한 보드 칸을 반환합니다."""
+        occupied = {(self.row, self.column)}
+        occupied.update(
+            (sub_bomb.row, sub_bomb.column)
+            for sub_bomb in self.sub_bombs
+            if sub_bomb.state != "done"
+        )
+        return occupied
+
+
+    def draw(self) -> None:
+        if self.state == "charging":
+            canvas = _draw_bomb_shape(
+                self.diagonal_chain,
+                self.charge_progress,
+                self.ROMAN_RANGES[self.chain_range],
+                fill_both=False
+            )
+            dis.blit(canvas, canvas.get_rect(center=self.pos))
+        elif self.state == "exploding":
+            canvas = _draw_bomb_shape(
+                self.diagonal_chain,
+                1.0,
+                self.ROMAN_RANGES[self.chain_range],
+                fill_both=False
+            )
+            _draw_bomb_explosion(canvas, self.pos, self.explosion_remaining)
+        for sub_bomb in self.sub_bombs:
+            sub_bomb.draw()
+
+
+class SubBomb:
+    """메인 폭탄의 연쇄 칸에서 대기·폭발·피격을 독립적으로 처리합니다."""
+
+    def configure(
+        self,
+        row: int,
+        column: int,
+        diagonal_chain: bool,
+        trigger_delay: float
+    ) -> None:
+        self.row = row
+        self.column = column
+        self.diagonal_chain = diagonal_chain
+        self.trigger_delay = max(0.0, trigger_delay)
+        self.state = "waiting"
+        self.explosion_remaining = 0.0
+        self.pos = Bomb._get_cell_center(row, column)
+
+    def update(self, delta_time: float, target_player) -> None:
+        """지연 후 폭발하고 정해진 짧은 시간 동안 해당 타일에 피해를 줍니다."""
+        delta_time = max(0.0, delta_time)
+        active_delta = delta_time
+        if self.state == "waiting":
+            if delta_time + 1e-12 < self.trigger_delay:
+                self.trigger_delay -= delta_time
+                return
+            active_delta = max(0.0, delta_time - self.trigger_delay)
+            self.trigger_delay = 0.0
+            self.state = "exploding"
+            self.explosion_remaining = BOMB_DAMAGE_WINDOW_SECONDS
+
+        if self.state != "exploding":
+            return
+
+        self._damage_player_in_blast_cell(target_player)
+        self.explosion_remaining -= active_delta
+        if self.explosion_remaining <= 1e-12:
+            self.state = "done"
+
+    def _damage_player_in_blast_cell(self, target_player) -> None:
+        if (
+            target_player is None
+            or target_player.hp <= 0
+            or target_player.hp_minus
+            or target_player.invincible
+        ):
+            return
+        Bomb._damage_player_on_cell(self.row, self.column, target_player)
+
+    def draw(self) -> None:
+        if self.state != "exploding":
+            return
+
+        canvas = _draw_bomb_shape(
+            self.diagonal_chain,
+            1.0,
+            fill_both=False
+        )
+        _draw_bomb_explosion(canvas, self.pos, self.explosion_remaining)
+
+
+def _draw_bomb_shape(
+    diagonal_chain: bool,
+    fill_progress: float,
+    label: Optional[str] = None,
+    fill_both: bool = False
+) -> Surface:
+    """두 정사각형을 겹쳐 폭탄의 8각별 충전·폭발 모양을 그립니다."""
+    side = BOMB_SHAPE_SIZE
+    canvas = pygame.Surface((side, side), pygame.SRCALPHA)
+    square_side = round(side * 0.62)
+
+    def draw_square(angle: float, fill_square: bool, progress: float) -> None:
+        square = pygame.Surface((square_side, square_side), pygame.SRCALPHA)
+        if fill_square and progress > 0.0:
+            fill_side = max(1, round(square_side * min(1.0, progress)))
+            pygame.draw.rect(
+                square,
+                BLACK,
+                (
+                    (square_side - fill_side) // 2,
+                    (square_side - fill_side) // 2,
+                    fill_side,
+                    fill_side
+                )
+            )
+        pygame.draw.rect(square, BLACK, (0, 0, square_side, square_side), 2)
+        if angle:
+            square = pygame.transform.rotate(square, angle)
+        canvas.blit(
+            square,
+            square.get_rect(center=(canvas.get_width() // 2, canvas.get_height() // 2))
+        )
+
+    # 메인 폭탄은 방향에 맞는 사각형만 충전하고 서브 폭탄은 둘 다 채웁니다.
+    draw_square(
+        0,
+        fill_both or not diagonal_chain,
+        fill_progress if not diagonal_chain else 1.0
+    )
+    draw_square(
+        45,
+        fill_both or diagonal_chain,
+        fill_progress if diagonal_chain else 1.0
+    )
+    if label is not None:
+        draw_ui_text(
+            canvas,
+            label,
+            WHITE,
+            (side // 2, side // 2),
+            max(12, round(side * 0.24)),
+            center=True
+        )
+    return canvas
+
+
+def _draw_bomb_explosion(
+    canvas: Surface,
+    position: Tuple[int, int],
+    remaining_seconds: float
+) -> None:
+    """폭발 표면을 시계 방향으로 회전시키며 0.5초 동안 완전히 축소합니다."""
+    progress = max(
+        0.0,
+        min(1.0, 1.0 - remaining_seconds / BOMB_DAMAGE_WINDOW_SECONDS)
+    )
+    swell_progress = 0.2
+    if progress <= swell_progress:
+        scale = 1.0 + 0.45 * progress / swell_progress
+    else:
+        shrink_progress = (progress - swell_progress) / (1.0 - swell_progress)
+        scale = 1.45 * (1.0 - shrink_progress)
+    if scale <= 0.02:
+        return
+    rotated = pygame.transform.rotate(canvas, -1080.0 * progress)
+    scaled_size = max(1, round(BOMB_SHAPE_SIZE * scale))
+    rotated = pygame.transform.smoothscale(
+        rotated,
+        (scaled_size, scaled_size)
+    )
+    dis.blit(rotated, rotated.get_rect(center=position))
+
+
+def get_bomb_chain_cells(
+    row: int,
+    column: int,
+    chain_range: int,
+    diagonal_chain: bool
+) -> List[Tuple[int, int, int]]:
+    """중심을 제외하고 십자 또는 대각 십자 방향의 유효 칸만 반환합니다."""
+    directions = (
+        ((-1, -1), (-1, 1), (1, -1), (1, 1))
+        if diagonal_chain
+        else ((-1, 0), (1, 0), (0, -1), (0, 1))
+    )
+    cells = []
+    for distance in range(1, max(0, min(3, chain_range)) + 1):
+        for row_step, column_step in directions:
+            target_row = row + row_step * distance
+            target_column = column + column_step * distance
+            if 0 <= target_row < GRID_SIZE and 0 <= target_column < GRID_SIZE:
+                cells.append((target_row, target_column, distance))
+    return cells
+
+
+class BombManager:
+    """메인 폭탄의 생성과 고정 간격 업데이트를 담당하는 얇은 관리자입니다."""
+
+    def __init__(self) -> None:
+        self.bombs: List[Bomb] = []
+        self._simulation_accumulator = 0.0
+
+    def reset_for_level(self) -> None:
+        """새 플레이 시도의 폭탄 및 연쇄 상태를 초기화합니다."""
+        self.bombs.clear()
+        self._simulation_accumulator = 0.0
+
+    def spawn(self) -> bool:
+        """폭탄이 없는 무작위 보드 칸에 메인 폭탄을 생성합니다."""
+        occupied_cells = {
+            cell
+            for bomb in self.bombs
+            if bomb.state != "done"
+            for cell in bomb.get_occupied_cells()
+        }
+        available_cells = [
+            (row, column)
+            for row in range(GRID_SIZE)
+            for column in range(GRID_SIZE)
+            if (row, column) not in occupied_cells
+        ]
+        if not available_cells:
+            return False
+
+        row, column = random.choice(available_cells)
+        bomb = Bomb()
+        bomb.configure(
+            row,
+            column,
+            random.randint(0, 3),
+            bool(random.getrandbits(1))
+        )
+        self.bombs.append(bomb)
+        return True
+
+    def update(self, delta_time: float, target_player) -> None:
+        """dt 기반 고정 스텝으로 각 메인 폭탄과 내부 연쇄 파동을 갱신합니다."""
+        self._simulation_accumulator += max(0.0, delta_time)
+        while (
+            self._simulation_accumulator + 1e-12
+            >= BOMB_SIMULATION_STEP
+        ):
+            for bomb in self.bombs:
+                bomb.update(BOMB_SIMULATION_STEP, target_player)
+            self.bombs = [bomb for bomb in self.bombs if bomb.state != "done"]
+            self._simulation_accumulator = max(
+                0.0,
+                self._simulation_accumulator - BOMB_SIMULATION_STEP
+            )
+        self.draw()
+
+    def draw(self) -> None:
+        """현재 활성 상태의 모든 폭탄을 그립니다."""
+        for bomb in self.bombs:
+            bomb.draw()
+
+
 def spawn_ball():
     """보드 가장자리 바깥에서 직선으로 들어오는 공을 생성합니다."""
     for _ in range(20):
@@ -1478,19 +1871,24 @@ def spawn_log():
             return
 
 
-def spawn_enemies_by_level():
-    """현재 레벨에 설정된 생성 간격에 따라 적을 추가합니다."""
-    global ball_delay, tball_delay, vball_delay, laser_delay, log_delay
+def spawn_bomb() -> bool:
+    """메인 폭탄 하나를 생성합니다. 보드 타일이 가득 차면 생성하지 않습니다."""
+    return bomb_manager.spawn()
+
+
+def spawn_enemies_by_level() -> None:
+    """현재 레벨의 장애물 생성 규칙과 폭탄 지연 스폰을 처리합니다."""
+    global ball_delay, tball_delay, vball_delay, laser_delay, log_delay, bomb_delay
     if game_level == 1:
-        if ball_delay <= 0:
+        if ball_delay <= 0 and False:
             spawn_ball()
             ball_delay = 10*random.randint(10, 30)
             for i in range(random.randint(0, 3)): spawn_ball()
-        if tball_delay <= 0:
+        if tball_delay <= 0 and False:
             spawn_tball()
             tball_delay = 10*random.randint(40, 70)
             for i in range(random.randint(0, 0)): spawn_tball()
-        if vball_delay <= 0:
+        if vball_delay <= 0 and False:
             spawn_vball()
             vball_delay = 10*random.randint(20, 30)
             for i in range(random.randint(0, 2)): spawn_vball()
@@ -1502,6 +1900,9 @@ def spawn_enemies_by_level():
             spawn_log()
             log_delay = 10*random.randint(10, 20)
             for i in range(random.randint(0, 0)): spawn_log()
+        if bomb_delay <= 0:
+            spawn_bomb()
+            bomb_delay = 10*random.randint(40, 40)
     if game_level == 2:
         if ball_delay <= 0:
             spawn_ball()
@@ -1523,6 +1924,9 @@ def spawn_enemies_by_level():
             spawn_log()
             log_delay = 10*random.randint(10, 20)
             for i in range(random.randint(0, 0)): spawn_log()
+        if bomb_delay <= 0:
+            spawn_bomb()
+            bomb_delay = 10*random.randint(300, 400)
     if game_level == 3:
         if ball_delay <= 0:
             spawn_ball()
@@ -1543,6 +1947,9 @@ def spawn_enemies_by_level():
             spawn_log()
             log_delay = 10*random.randint(10, 20)
             for i in range(random.randint(0, 0)): spawn_log()
+        if bomb_delay <= 0:
+            spawn_bomb()
+            bomb_delay = 10*random.randint(250, 350)
     if game_level == 4:
         if ball_delay <= 0 and False:
             spawn_ball()
@@ -1564,6 +1971,9 @@ def spawn_enemies_by_level():
             log_delay = 10*random.randint(50, 100)
             for i in range(random.randint(0, 0)): spawn_log()
             if random.randint(1, 4) == 1: log_delay = 10*10
+        if bomb_delay <= 0:
+            spawn_bomb()
+            bomb_delay = 10*random.randint(220, 300)
     if game_level == 5:
         if ball_delay <= 0:
             ball_delay = 10*random.randint(20, 30)
@@ -1583,6 +1993,9 @@ def spawn_enemies_by_level():
             spawn_log()
             log_delay = 10*random.randint(10, 20)
             for i in range(random.randint(0, 0)): spawn_log()
+        if bomb_delay <= 0:
+            spawn_bomb()
+            bomb_delay = 10*random.randint(180, 250)
     if game_level == 6:  # 보스맵
         if ball_delay <= 0:
             ball_delay = 10*random.randint(10, 10)
@@ -1603,6 +2016,9 @@ def spawn_enemies_by_level():
             log_delay = 10*random.randint(30, 60)
             for i in range(random.randint(0, 0)): spawn_log()
             if random.randint(1, 2) == 1: log_delay = 10*10
+        if bomb_delay <= 0:
+            spawn_bomb()
+            bomb_delay = 10*random.randint(100, 150)
     
     if game_level == 7:
         if ball_delay <= 0 and False:
@@ -1621,6 +2037,9 @@ def spawn_enemies_by_level():
             log_delay = 10*random.randint(50, 200)
             for i in range(random.randint(1, 1)): spawn_log()
             if random.randint(1, 5) == 1: log_delay = 10*20
+        if bomb_delay <= 0:
+            spawn_bomb()
+            bomb_delay = 10*random.randint(180, 240)
     if game_level == 8:
         if ball_delay <= 0:
             ball_delay = 10*random.randint(1, 1)
@@ -1639,6 +2058,9 @@ def spawn_enemies_by_level():
         if log_delay <= 0 and False:
             log_delay = 10*random.randint(50, 200)
             for i in range(random.randint(1, 1)): spawn_log()
+        if bomb_delay <= 0:
+            spawn_bomb()
+            bomb_delay = 10*random.randint(160, 220)
     if game_level == 9:
         if ball_delay <= 0 and False:
             ball_delay = 10*random.randint(1, 1)
@@ -1659,6 +2081,9 @@ def spawn_enemies_by_level():
             log_delay = 10*random.randint(40, 60)
             for i in range(random.randint(1, 1)): spawn_log()
             if random.randint(1, 4) == 1: log_delay = 10*20
+        if bomb_delay <= 0:
+            spawn_bomb()
+            bomb_delay = 10*random.randint(120, 180)
     if game_level == 10:  # 보스맵
         if ball_delay <= 0 and False:
             ball_delay = 10*random.randint(1, 1)
@@ -1678,7 +2103,9 @@ def spawn_enemies_by_level():
             log_delay = 10*random.randint(10, 30)
             for i in range(random.randint(1, 1)): spawn_log()
             if random.randint(1, 5) == 1: log_delay = 10*1
-
+        if bomb_delay <= 0:
+            spawn_bomb()
+            bomb_delay = 10*random.randint(30, 60)
 
 def is_collision(
     pos1: Tuple[Tuple[int, int], Tuple[int, int]],
@@ -2077,6 +2504,8 @@ clock = pygame.time.Clock()
 tps = 60
 player = None
 enemies = []
+bomb_manager = BombManager()
+bomb_delay = 0.0
 pause = False
 hit_count = [0, 0, 0, 0, 0]
 hit_stack = False
@@ -2094,6 +2523,8 @@ while should_restart:
         preview_level = selected_level
         preview_track_duration_seconds = get_track_duration_seconds(preview_level)
         enemies = []
+        bomb_manager.reset_for_level()
+        bomb_delay = 0.0
         ball_delay = tball_delay = vball_delay = laser_delay = log_delay = 0
         hit_count = [0, 0, 0, 0, 0]
         hit_stack = False
@@ -2179,6 +2610,8 @@ while should_restart:
                     locked_preview_balls.clear()
                     locked_preview_timer = 0.0
                     locked_preview_index = 0
+                    bomb_manager.reset_for_level()
+                    bomb_delay = 0.0
                     ball_delay = tball_delay = vball_delay = laser_delay = log_delay = 0
                     preview_spectrum = [0.0] * SPECTRUM_BAND_COUNT
                     preview_onset = 0.0
@@ -2191,6 +2624,8 @@ while should_restart:
                 locked_preview_balls.clear()
                 locked_preview_timer = 0.0
                 locked_preview_index = 0
+                bomb_manager.reset_for_level()
+                bomb_delay = 0.0
                 if not preview_locked:
                     pygame.mixer.music.load(MUSIC_TRACKS[preview_level])
                     pygame.mixer.music.play(fade_ms=120)
@@ -2225,6 +2660,7 @@ while should_restart:
                 vball_delay -= delay_step
                 laser_delay -= delay_step
                 log_delay -= delay_step
+                bomb_delay -= delay_step
                 spawn_enemies_by_level()
 
             dis.fill(DARK_GRAY)
@@ -2235,6 +2671,8 @@ while should_restart:
             )
             draw_spectrum_bars(preview_spectrum)
             draw_board()
+            if not preview_locked:
+                bomb_manager.update(delta_time, None)
             if preview_locked:
                 locked_preview_timer, locked_preview_index = update_locked_preview_balls(
                     locked_preview_balls,
@@ -2266,6 +2704,8 @@ while should_restart:
     player = Player()
 
     enemies = [Ball(), TBall(), VBall(), Laser()]
+    bomb_manager.reset_for_level()
+    bomb_delay = 0
     ball_delay = 0
     tball_delay = 0
     vball_delay = 0
@@ -2425,6 +2865,7 @@ while should_restart:
             draw_board()
             player.draw()
             update_enemies()
+            bomb_manager.draw()
 
             # 어두운 바탕 위에 터미널 로그 패널을 좌우 정렬합니다.
             pause_dis.fill(pygame.SRCALPHA)
@@ -2685,8 +3126,10 @@ while should_restart:
             vball_delay -= 1/tps*100
             laser_delay -= 1/tps*100
             log_delay -= 1/tps*100
+            bomb_delay -= 1/tps*100
             spawn_enemies_by_level()
             update_enemies()
+            bomb_manager.update(delta_time, player)
 
         # 디스크에 매 프레임 쓰지 않도록 변경된 기록은 5초마다 자동 저장합니다.
         if save_dirty and pygame.time.get_ticks() - last_save_time >= 5000:

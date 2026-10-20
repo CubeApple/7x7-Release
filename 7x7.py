@@ -2068,21 +2068,21 @@ def spawn_enemies_by_level() -> None:
             ball_delay = 10*random.randint(10, 20)
             for i in range(random.randint(1, 2)): spawn_ball()
         if tball_delay <= 0:
-            tball_delay = 10*random.randint(50, 100)
+            tball_delay = 10*random.randint(50, 80)
             for i in range(random.randint(3, 4)): spawn_tball()
         if vball_delay <= 0 and False:
             vball_delay = 10*random.randint(10, 30)
             for i in range(random.randint(1, 2)): spawn_vball()
         if laser_delay <= 0:
-            laser_delay = 10*random.randint(10, 10)
+            laser_delay = 10*random.randint(20, 40)
             for i in range(random.randint(1, 1)): spawn_laser()
         if log_delay <= 0:
-            log_delay = 10*random.randint(50, 200)
+            log_delay = 10*random.randint(50, 70)
             for i in range(random.randint(1, 1)): spawn_log()
             if random.randint(1, 5) == 1: log_delay = 10*20
         if bomb_delay <= 0:
             spawn_bomb()
-            bomb_delay = 10*random.randint(180, 240)
+            bomb_delay = 10*random.randint(30, 50)
     if game_level == 8:
         if ball_delay <= 0:
             ball_delay = 10*random.randint(1, 1)

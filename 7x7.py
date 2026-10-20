@@ -188,6 +188,8 @@ BOMB_CHARGE_SECONDS = 1.8
 BOMB_CHAIN_DELAY_SECONDS = 0.15
 # 메인·서브 폭탄 각각의 폭발 애니메이션 및 해당 칸 피격 판정 지속 시간입니다.
 BOMB_DAMAGE_WINDOW_SECONDS = 0.35
+# 폭발 시간 전체에 걸쳐 회전할 각도입니다. 음수는 시계 방향이며, 값을 낮추면 더 천천히 돕니다.
+BOMB_EXPLOSION_ROTATION_DEGREES = 45.0
 # 프레임 차이에 따른 타이밍 오차를 줄이는 폭탄 전용 고정 업데이트 간격입니다.
 BOMB_SIMULATION_STEP = 1.0 / 120.0
 BOMB_SHAPE_SIZE = round(CELL_SIZE * 0.72)
@@ -1667,7 +1669,7 @@ def _draw_bomb_explosion(
     position: Tuple[int, int],
     remaining_seconds: float
 ) -> None:
-    """폭발 표면을 회전 없이 부풀렸다가 설정된 시간 동안 축소합니다."""
+    """폭발 표면을 천천히 시계 방향으로 돌리며 부풀렸다가 축소합니다."""
     progress = max(
         0.0,
         min(1.0, 1.0 - remaining_seconds / BOMB_DAMAGE_WINDOW_SECONDS)
@@ -1681,9 +1683,13 @@ def _draw_bomb_explosion(
         scale = 1.45 * (1.0 - shrink_progress)
     if scale <= 0.02:
         return
+    rotated = pygame.transform.rotate(
+        canvas,
+        -BOMB_EXPLOSION_ROTATION_DEGREES * progress
+    )
     scaled_size = max(1, round(BOMB_SHAPE_SIZE * scale))
     scaled = pygame.transform.smoothscale(
-        canvas,
+        rotated,
         (scaled_size, scaled_size)
     )
     dis.blit(scaled, scaled.get_rect(center=position))
@@ -2101,7 +2107,7 @@ def spawn_enemies_by_level() -> None:
         if log_delay <= 0 and False:
             log_delay = 10*random.randint(50, 200)
             for i in range(random.randint(1, 1)): spawn_log()
-        if bomb_delay <= 0:
+        if bomb_delay <= 0 and False:
             spawn_bomb()
             bomb_delay = 10*random.randint(160, 220)
     if game_level == 9:
@@ -2123,10 +2129,10 @@ def spawn_enemies_by_level() -> None:
         if log_delay <= 0:
             log_delay = 10*random.randint(40, 60)
             for i in range(random.randint(1, 1)): spawn_log()
-            if random.randint(1, 4) == 1: log_delay = 10*20
+            if random.randint(1, 5) == 1: log_delay = 10*20
         if bomb_delay <= 0:
             spawn_bomb()
-            bomb_delay = 10*random.randint(120, 180)
+            bomb_delay = 10*random.randint(40, 40)
     if game_level == 10:  # 보스맵
         if ball_delay <= 0 and False:
             ball_delay = 10*random.randint(1, 1)
@@ -2140,15 +2146,14 @@ def spawn_enemies_by_level() -> None:
             for i in range(random.randint(2, 3)): spawn_vball()
         if laser_delay <= 0:
             laser_delay = 10*random.randint(1, 1)
-            for i in range(random.randint(0, 0)): spawn_laser()
             if random.randint(1, 7) == 1: spawn_laser()
         if log_delay <= 0:
-            log_delay = 10*random.randint(10, 30)
+            log_delay = 10*random.randint(30, 50)
             for i in range(random.randint(1, 1)): spawn_log()
-            if random.randint(1, 5) == 1: log_delay = 10*1
+            if random.randint(1, 7) == 1: log_delay = 10*1
         if bomb_delay <= 0:
             spawn_bomb()
-            bomb_delay = 10*random.randint(30, 60)
+            bomb_delay = 10*random.randint(20, 40)
 
 def is_collision(
     pos1: Tuple[Tuple[int, int], Tuple[int, int]],

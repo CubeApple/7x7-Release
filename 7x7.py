@@ -2,6 +2,7 @@ import pygame
 from pygame.surface import Surface
 from pygame.color import Color
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, Sequence
+import atexit
 import random
 import math
 import base64
@@ -250,15 +251,12 @@ SPECTRUM_AGC_INITIAL_PEAK = 160.0
 SPECTRUM_AGC_PEAK_FLOOR = 80.0
 SPECTRUM_AGC_TARGET_LEVEL = 205.0
 SPECTRUM_AGC_MAX_LEVEL = 220.0
-# 대역 순서대로 짙은 실버에서 밝은 화이트로 이어지는 기본 색상입니다.
-SPECTRUM_BAR_COLORS = tuple(
-    (
-        round(166 + 72 * band / max(1, SPECTRUM_BAND_COUNT - 1)),
-        round(173 + 72 * band / max(1, SPECTRUM_BAND_COUNT - 1)),
-        round(184 + 71 * band / max(1, SPECTRUM_BAND_COUNT - 1))
-    )
-    for band in range(SPECTRUM_BAND_COUNT)
+SPECTRUM_BAR_COLORS = (
+    (255, 255, 255),
+    (210, 210, 210),
+    (140, 140, 140)
 )
+SPECTRUM_BAR_PATTERN = (0, 1, 2, 1, 0, 1, 2, 1)
 ESC_HOME_HOLD_SECONDS = 1.0
 RESTART_HOLD_SECONDS = ESC_HOME_HOLD_SECONDS
 ESC_PAUSE_TAP_SECONDS = 0.2
@@ -286,6 +284,9 @@ ball_dis = pygame.Surface((100, 100), pygame.SRCALPHA)
 pause_dis = pygame.Surface(display_size, pygame.SRCALPHA)
 home_fade_surface = pygame.Surface(display_size, pygame.SRCALPHA)
 visual_effect_layer = pygame.Surface(display_size, pygame.SRCALPHA)
+customization_ui_layer = pygame.Surface(display_size, pygame.SRCALPHA)
+customization_idle_layer = pygame.Surface(display_size, pygame.SRCALPHA)
+customization_mode_indicator = pygame.Surface((500, 42), pygame.SRCALPHA)
 home_menu_gradient = pygame.Surface((320, display_size[1]), pygame.SRCALPHA)
 for gradient_x in range(home_menu_gradient.get_width()):
     gradient_alpha = round(
@@ -417,7 +418,7 @@ def draw_main_rhythm_polygon(
 
 
 def draw_spectrum_bars(levels: Sequence[float], record_flash: float = 0.0) -> None:
-    """주파수별 회백색 막대를 효과 레이어에 합성해 한 번에 표시합니다."""
+    """양옆에 색상이 순환하는 실버 막대를 밑줄 없이 그립니다."""
     flash = max(0.0, min(1.0, record_flash))
     for band, level in enumerate(levels):
         if level < 8:
@@ -425,19 +426,15 @@ def draw_spectrum_bars(levels: Sequence[float], record_flash: float = 0.0) -> No
         bar_length = max(2, round(level / 255.0 * SPECTRUM_BAR_MAX_LENGTH))
         y = SPECTRUM_BAR_TOP + band * SPECTRUM_BAR_SPACING
         energy = min(1.0, level / 255.0)
-        base_color = SPECTRUM_BAR_COLORS[band % len(SPECTRUM_BAR_COLORS)]
+        color_index = SPECTRUM_BAR_PATTERN[band % len(SPECTRUM_BAR_PATTERN)]
+        base_color = SPECTRUM_BAR_COLORS[color_index]
         color = (
             round(base_color[0] + (255 - base_color[0]) * flash),
-            round(base_color[1] + (220 - base_color[1]) * flash),
-            round(base_color[2] + (80 - base_color[2]) * flash),
+            round(base_color[1] + (255 - base_color[1]) * flash),
+            round(base_color[2] + (255 - base_color[2]) * flash),
             round(230 + energy * 25)
         )
-        glow_color = (
-            min(255, color[0] + 8),
-            min(255, color[1] + 8),
-            min(255, color[2] + 8),
-            76
-        )
+        glow_color = (255, 255, 255, 52)
         pygame.draw.rect(
             visual_effect_layer,
             glow_color,
@@ -449,14 +446,6 @@ def draw_spectrum_bars(levels: Sequence[float], record_flash: float = 0.0) -> No
             color,
             (12, y, bar_length, SPECTRUM_BAR_HEIGHT),
             border_radius=3
-        )
-        highlight_color = tuple(min(255, channel + 25) for channel in color[:3]) + (150,)
-        pygame.draw.line(
-            visual_effect_layer,
-            highlight_color,
-            (14, y + 1),
-            (10 + bar_length, y + 1),
-            1
         )
         pygame.draw.rect(
             visual_effect_layer,
@@ -474,13 +463,6 @@ def draw_spectrum_bars(levels: Sequence[float], record_flash: float = 0.0) -> No
             color,
             (display_size[0] - 12 - bar_length, y, bar_length, SPECTRUM_BAR_HEIGHT),
             border_radius=3
-        )
-        pygame.draw.line(
-            visual_effect_layer,
-            highlight_color,
-            (display_size[0] - 14, y + 1),
-            (display_size[0] - 10 - bar_length, y + 1),
-            1
         )
     dis.blit(visual_effect_layer, (0, 0))
 
@@ -587,22 +569,74 @@ def is_level_locked(level_index: int) -> bool:
     )
 
 
+def draw_selector_header(surface: Surface, title: str, subtitle: str) -> int:
+    """맵 선택과 커스터마이징 화면에서 공유하는 우측 패널 헤더를 그립니다."""
+    menu_text_x = display_size[0] - 260
+    draw_ui_text(surface, title, (218, 223, 231, 220), (menu_text_x, 58), 27)
+    draw_ui_text(surface, subtitle, LIGHT_GRAY, (menu_text_x, 91), 14)
+    return menu_text_x
+
+
+def draw_selector_row(
+    surface: Surface,
+    text: str,
+    y: int,
+    selected: bool,
+    distance: int = 0,
+    color: Optional[Tuple[int, ...]] = None
+) -> None:
+    """두 선택 화면이 공유하는 캐러셀 행과 포커스 표시를 렌더링합니다."""
+    menu_text_x = display_size[0] - 260
+    if selected:
+        surface.blit(home_highlight_glow, (menu_text_x - 20, y - 29))
+        pygame.draw.line(
+            surface,
+            (238, 243, 252, 208),
+            (menu_text_x - 14, y - 19),
+            (menu_text_x - 14, y + 19),
+            2
+        )
+        draw_fitted_ui_text(
+            surface,
+            text,
+            color or WHITE,
+            (menu_text_x, y - 19),
+            27,
+            max_width=240,
+            min_size=13
+        )
+        return
+
+    alpha = max(38, round(178 * math.exp(-distance * 0.52)))
+    row_color = color or (190, 195, 205, alpha)
+    draw_fitted_ui_text(
+        surface,
+        text,
+        row_color,
+        (menu_text_x, y - max(8, 12 - distance)),
+        max(14, 21 - distance),
+        max_width=240,
+        min_size=12
+    )
+
+
 def draw_home_menu(
     selected_level: int,
     fade_alpha: int,
     track_duration_seconds: float
 ) -> None:
     """음악 미리보기 위에 세로 레벨 캐러셀과 조작 안내를 표시합니다."""
+    if fade_alpha > 0:
+        home_fade_surface.fill((0, 0, 0, min(255, fade_alpha)))
+        dis.blit(home_fade_surface, (0, 0))
     dis.blit(home_menu_gradient, (display_size[0] - home_menu_gradient.get_width(), 0))
-    menu_text_x = display_size[0] - 260
-    draw_ui_text(dis, "SELECT A MAP", (218, 223, 231, 220), (menu_text_x, 58), 27)
     if selected_level == 0:
         stage_label = f"TUTORIAL  |  1 / {MAX_LEVEL}"
     elif selected_level in BOSS_LEVEL_INDICES:
         stage_label = f"BOSS STAGE  |  {selected_level + 1} / {MAX_LEVEL}"
     else:
         stage_label = f"STAGE  {selected_level + 1} / {MAX_LEVEL}"
-    draw_ui_text(dis, stage_label, LIGHT_GRAY, (menu_text_x, 91), 14)
+    menu_text_x = draw_selector_header(dis, "SELECT A MAP", stage_label)
 
     for level_index, (name, creator) in enumerate(zip(LEVEL_NAMES, LEVEL_CREATORS)):
         offset = level_index - selected_level
@@ -610,35 +644,24 @@ def draw_home_menu(
             continue
         y = display_size[1] // 2 + offset * 68
         if level_index == selected_level:
-            dis.blit(home_highlight_glow, (menu_text_x - 20, y - 29))
-            pygame.draw.line(
+            locked_label = "  [LOCKED]" if is_level_locked(level_index) else ""
+            draw_selector_row(
                 dis,
-                (238, 243, 252, 208),
-                (menu_text_x - 14, y - 19),
-                (menu_text_x - 14, y + 19),
-                2
+                f"{name}{locked_label}",
+                y,
+                True,
+                color=WHITE if not locked_label else (255, 206, 184)
             )
-            draw_ui_text(dis, name, WHITE, (menu_text_x, y - 19), 27)
-            if is_level_locked(level_index):
-                draw_ui_text(
-                    dis,
-                    "[LOCKED]",
-                    (255, 174, 138, 235),
-                    (menu_text_x + 184, y - 13),
-                    14
-                )
             draw_ui_text(dis, creator, (205, 211, 220, 210), (menu_text_x, y + 14), 14)
         else:
             distance = abs(offset)
-            alpha = max(38, round(178 * math.exp(-distance * 0.52)))
-            color = (190, 195, 205, alpha)
             locked_label = " [LOCKED]" if is_level_locked(level_index) else ""
-            draw_ui_text(
+            draw_selector_row(
                 dis,
                 f"{name} ({creator}){locked_label}",
-                color,
-                (menu_text_x, y - max(8, 12 - distance)),
-                max(14, 21 - distance)
+                y,
+                False,
+                distance
             )
 
     draw_ui_text(dis, "Created by", LIGHT_GRAY, (22, display_size[1] - 76), 16)
@@ -715,93 +738,135 @@ def draw_home_menu(
     else:
         draw_ui_text(dis, "ENTER  Start", WHITE, (menu_text_x, 818), 18)
 
-    if fade_alpha > 0:
-        home_fade_surface.fill((0, 0, 0, min(255, fade_alpha)))
-        dis.blit(home_fade_surface, (0, 0))
-
-
-@lru_cache(maxsize=1)
-def _get_customization_panel_surface() -> Surface:
-    """커스터마이징 패널의 반투명 배경을 한 번만 생성합니다."""
-    panel = pygame.Surface((350, 286), pygame.SRCALPHA)
-    pygame.draw.rect(panel, (12, 16, 23, 218), panel.get_rect(), border_radius=14)
-    pygame.draw.rect(
-        panel,
-        (133, 255, 160, 100),
-        panel.get_rect(),
-        width=1,
-        border_radius=14
-    )
-    return panel
-
-
 def draw_customization_screen(
     selected_item: int,
     move_mode: bool,
     transition: float
 ) -> None:
-    """플레이어 미리보기와 현재 커스터마이징 선택 상태를 그립니다."""
-    panel = _get_customization_panel_surface()
-    panel_x = display_size[0] - panel.get_width() - 28
-    panel_y = display_size[1] // 2 - panel.get_height() // 2
-    dis.blit(panel, (panel_x, panel_y))
-
-    draw_ui_text(dis, "PLAYER CUSTOMIZATION", WHITE, (panel_x + 24, panel_y + 24), 22)
-    accent = (133, round(180 + 75 * max(0.0, min(1.0, transition))), 160)
-    draw_ui_text(
-        dis,
-        "MOVE TEST" if move_mode else "CUSTOMIZE",
-        accent,
-        (panel_x + 24, panel_y + 58),
-        15
+    """맵 선택과 같은 우측 캐러셀, 타이포그래피 및 강조 스타일로 표시합니다."""
+    customization_ui_layer.set_alpha(255)
+    customization_ui_layer.fill((0, 0, 0, 0))
+    ui = customization_ui_layer
+    ui.blit(home_menu_gradient, (display_size[0] - home_menu_gradient.get_width(), 0))
+    menu_text_x = draw_selector_header(
+        ui,
+        "CUSTOMIZE PLAYER",
+        "COLOR / HIT EFFECT"
     )
-    color_selected = selected_item == 0
-    effect_selected = selected_item == 1
+    transition = max(0.0, min(1.0, transition))
+
     color_name = PLAYER_CUSTOMIZATION["color"]
     effect_name = PLAYER_CUSTOMIZATION["hit_effect"]
-    draw_ui_text(
-        dis,
-        f"{'> ' if color_selected and not move_mode else '  '}Color: {color_name.title()}",
-        PLAYER_COLOR_MAP[color_name] if color_selected else LIGHT_GRAY,
-        (panel_x + 24, panel_y + 108),
-        19
+    values = (
+        f"Color: {color_name.title()}",
+        f"Hit Effect: {effect_name}"
     )
-    draw_ui_text(
-        dis,
-        f"{'> ' if effect_selected and not move_mode else '  '}Hit Effect: {effect_name}",
-        WHITE if effect_selected else LIGHT_GRAY,
-        (panel_x + 24, panel_y + 148),
-        18
+    selected_item = max(0, min(selected_item, len(values) - 1))
+    descriptions = (
+        "Player glow and hit particles use this color.",
+        {
+            "None": "No particles or flash appear when hit.",
+            "Particles": "Small colored particles scatter on hit.",
+            "Explosion": "A bright radial burst and ring on hit."
+        }[effect_name]
     )
-    if move_mode:
-        draw_ui_text(
-            dis,
-            "Arrow keys: move on the grid",
-            LIGHT_GRAY,
-            (panel_x + 24, panel_y + 202),
-            14
+    center_y = display_size[1] // 2
+    for item_index, value in enumerate(values):
+        offset = item_index - selected_item
+        y = center_y + offset * 68
+        is_selected = item_index == selected_item
+        draw_selector_row(
+            ui,
+            value,
+            y,
+            is_selected,
+            abs(offset),
+            WHITE if is_selected else None
         )
-    else:
-        draw_ui_text(
-            dis,
-            "UP / DOWN: choose item",
-            LIGHT_GRAY,
-            (panel_x + 24, panel_y + 202),
-            14
-        )
-        draw_ui_text(
-            dis,
-            "LEFT / RIGHT: change option",
-            LIGHT_GRAY,
-            (panel_x + 24, panel_y + 224),
-            14
-        )
+
+    description = descriptions[selected_item]
     draw_ui_text(
-        dis,
-        "ESC: toggle mode  |  P: map select",
+        ui,
+        "SELECTED OPTION",
         LIGHT_GRAY,
-        (display_size[0] // 2, display_size[1] - 34),
-        14,
+        (22, display_size[1] - 184),
+        16
+    )
+    draw_fitted_ui_text(
+        ui,
+        description,
+        (218, 223, 231),
+        (22, display_size[1] - 158),
+        15,
+        max_width=display_size[0] // 2,
+        min_size=12
+    )
+    controls = (
+        "ARROW KEYS  Move on grid"
+        if move_mode
+        else "UP / DOWN  Select option"
+    )
+    draw_ui_text(
+        ui,
+        controls,
+        LIGHT_GRAY,
+        (menu_text_x, 790),
+        16
+    )
+    draw_ui_text(ui, "ESC  Toggle mode", LIGHT_GRAY, (menu_text_x, 818), 18)
+    draw_ui_text(ui, "P  Map select", LIGHT_GRAY, (menu_text_x, 842), 14)
+
+    if not move_mode:
+        board_rect = pygame.Rect(
+            display_size[0] // 2 - BOARD_HALF_SIZE,
+            display_size[1] // 2 - BOARD_HALF_SIZE,
+            BOARD_HALF_SIZE * 2,
+            BOARD_HALF_SIZE * 2
+        )
+        customization_idle_layer.fill((0, 0, 0, 0))
+        pygame.draw.rect(
+            customization_idle_layer,
+            (12, 15, 22, 52),
+            board_rect
+        )
+        dis.blit(customization_idle_layer, (0, 0))
+
+    ui.set_alpha(round(255 - 140 * transition))
+    dis.blit(ui, (0, 0))
+
+    customization_mode_indicator.fill((0, 0, 0, 0))
+    indicator_color = (137, 255, 164) if move_mode else (238, 243, 252)
+    pygame.draw.rect(
+        customization_mode_indicator,
+        (12, 15, 22, 220),
+        customization_mode_indicator.get_rect(),
+        border_radius=10
+    )
+    pygame.draw.rect(
+        customization_mode_indicator,
+        (*indicator_color, 190),
+        customization_mode_indicator.get_rect(),
+        width=1,
+        border_radius=10
+    )
+    dis.blit(
+        customization_mode_indicator,
+        (
+            display_size[0] // 2 - customization_mode_indicator.get_width() // 2,
+            12
+        )
+    )
+    mode_text = (
+        "MODE: MOVE TEST  |  ESC: EDIT CUSTOMS"
+        if move_mode
+        else "MODE: CUSTOM SELECT  |  ESC: MOVE TEST"
+    )
+    draw_ui_text(
+        dis,
+        mode_text,
+        indicator_color,
+        (display_size[0] // 2, 33),
+        15,
         center=True
     )
 
@@ -987,6 +1052,45 @@ def draw_ui_text(
     horizontal = "center" if center else alignment
     locate = (horizontal, "middle" if center else "top")
     text_object.draw(surface, text_pos, locate)
+
+
+def draw_fitted_ui_text(
+    surface: Surface,
+    text: str,
+    color: Union[Color, int, str, Tuple[int, int, int], Tuple[int, int, int, int], Sequence[int]],
+    text_pos: Tuple[int, int],
+    text_size: int,
+    max_width: int,
+    min_size: int = 10
+) -> None:
+    """같은 UI 폰트를 유지하면서 지정 폭 안에 들어오도록 글자 크기를 줄입니다."""
+    fitted_size = text_size
+    while fitted_size >= min_size:
+        measured_text = Text({
+            "display": {"text": text, "color": color},
+            "font": {"size": fitted_size, "family": "game"}
+        })
+        if measured_text.width <= max_width:
+            draw_ui_text(surface, text, color, text_pos, fitted_size)
+            return
+        fitted_size -= 1
+
+    font = Text({"display": {"text": ""}})._get_font(
+        min_size,
+        False,
+        False,
+        "game"
+    )
+    fitted_text = text
+    while fitted_text and font.size(f"{fitted_text}...")[0] > max_width:
+        fitted_text = fitted_text[:-1]
+    draw_ui_text(
+        surface,
+        f"{fitted_text.rstrip()}..." if fitted_text != text else text,
+        color,
+        text_pos,
+        min_size
+    )
 
 
 def draw_hold_gauge(
@@ -3487,7 +3591,7 @@ def get_clear_rank(hp: int, clear_score: float) -> str:
     return "Good"
 
 
-def save_game_data() -> None:
+def save_game_data() -> bool:
     """진행률, 점수, 시도 횟수와 클리어 통계를 JSON에 저장합니다."""
     global save_dirty, last_save_time
     data = {
@@ -3506,11 +3610,15 @@ def save_game_data() -> None:
     except (OSError, TypeError, ValueError) as error:
         print(f"게임 저장 중 오류가 발생했습니다: {error}")
         if os.path.exists(temp_path):
-            os.remove(temp_path)
-        return
+            try:
+                os.remove(temp_path)
+            except OSError as cleanup_error:
+                print(f"임시 저장 파일을 정리하지 못했습니다: {cleanup_error}")
+        return False
     save_dirty = False
-    last_save_time = pygame.time.get_ticks()
+    last_save_time = pygame.time.get_ticks() if pygame.get_init() else 0
     print("게임 기록을 저장했습니다.")
+    return True
 
 
 def load_game_data() -> None:
@@ -3661,6 +3769,19 @@ hit_count = [0, 0, 0, 0, 0]
 hit_stack = False
 music_endevent = pygame.USEREVENT + 1
 should_restart = True
+_shutdown_save_completed = False
+
+
+def _save_game_data_on_exit() -> None:
+    """정상 종료와 예외 종료에서 마지막 게임 상태를 보존합니다."""
+    global _shutdown_save_completed
+    if not _shutdown_save_completed:
+        _shutdown_save_completed = save_game_data()
+
+
+atexit.register(_save_game_data_on_exit)
+
+
 while should_restart:
     if show_home:
         game_state = STATE_HOME
@@ -3681,6 +3802,11 @@ while should_restart:
         preview_spectrum_peaks = [
             SPECTRUM_AGC_INITIAL_PEAK
         ] * SPECTRUM_BAND_COUNT
+        customization_spectrum = [0.0] * SPECTRUM_BAND_COUNT
+        customization_spectrum_peaks = [
+            SPECTRUM_AGC_INITIAL_PEAK
+        ] * SPECTRUM_BAND_COUNT
+        customization_visualizer_time = 0.0
         preview_onset = 0.0
         locked_preview_balls = []
         locked_preview_timer = 0.0
@@ -3693,7 +3819,7 @@ while should_restart:
         customization_active = False
         customization_move_mode = False
         customization_item = 0
-        customization_transition = 1.0
+        customization_transition = 0.0
         customization_test_ball = None
         pygame.mixer.music.set_endevent()
         pygame.mixer.music.stop()
@@ -3721,7 +3847,6 @@ while should_restart:
                                 pygame.mixer.music.play(fade_ms=120)
                         elif event.key == pygame.K_ESCAPE:
                             customization_move_mode = not customization_move_mode
-                            customization_transition = 0.0
                         elif customization_move_mode and event.key in (
                             pygame.K_UP,
                             pygame.K_DOWN,
@@ -3762,7 +3887,12 @@ while should_restart:
                         customization_active = True
                         customization_move_mode = False
                         customization_item = 0
-                        customization_transition = 1.0
+                        customization_transition = 0.0
+                        customization_spectrum = [0.0] * SPECTRUM_BAND_COUNT
+                        customization_spectrum_peaks = [
+                            SPECTRUM_AGC_INITIAL_PEAK
+                        ] * SPECTRUM_BAND_COUNT
+                        customization_visualizer_time = 0.0
                         pygame.mixer.music.stop()
                         enemies.clear()
                         bomb_manager.reset_for_level()
@@ -3775,7 +3905,7 @@ while should_restart:
                         customization_test_ball.configure(
                             (test_center[0], test_center[1], 0),
                             CELL_SIZE,
-                            speed=2,
+                            speed=4,
                             turn=1,
                             loop=True
                         )
@@ -3828,10 +3958,31 @@ while should_restart:
                 customization_transition += (
                     customization_target - customization_transition
                 ) * (1.0 - math.exp(-12.0 * delta_time))
+                customization_visualizer_time += delta_time
+                customization_targets = tuple(
+                    90.0
+                    + 55.0 * (
+                        math.sin(customization_visualizer_time * 2.7 + band * 0.52)
+                        + 1.0
+                    )
+                    + 30.0 * (
+                        math.sin(customization_visualizer_time * 1.35 - band * 0.19)
+                        + 1.0
+                    )
+                    for band in range(SPECTRUM_BAND_COUNT)
+                )
+                update_spectrum_levels(
+                    customization_targets,
+                    customization_spectrum,
+                    customization_spectrum_peaks,
+                    delta_time
+                )
                 if customization_move_mode:
                     player_move(player, pygame.key.get_pressed())
                 player.update(delta_time)
                 dis.fill(DARK_GRAY)
+                visual_effect_layer.fill((0, 0, 0, 0))
+                draw_spectrum_bars(customization_spectrum)
                 draw_board()
                 update_enemies()
                 player.draw()
@@ -4386,4 +4537,5 @@ while should_restart:
     pygame.mixer.music.set_endevent()
     pygame.mixer.music.stop()
     save_game_data()
+_save_game_data_on_exit()
 pygame.quit()

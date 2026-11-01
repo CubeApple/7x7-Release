@@ -1,7 +1,44 @@
 {
     "version": 1,
     "game_level": 1,
+    "track_ids": [
+        "Sunburst_NCS.mp3",
+        "MintParfait.mp3",
+        "SmokedTurkeyRag.mp3",
+        "DaDiDuDonut.mp3",
+        "Butterfly.mp3",
+        "FizzyPixel.mp3",
+        "MyLittleHero.mp3",
+        "PixelPig.mp3",
+        "Chess.mp3",
+        "AmongUsTrapRemix.mp3",
+        "TheWorldRevolvong.mp3",
+        "Megalovania.mp3",
+        "Enemy.mp3",
+        "NyanCat.mp3",
+        "EEEAAAOOO.mp3",
+        "LemonOiia.mp3",
+        "Unity.mp3",
+        "Xenogenesis.mp3",
+        "PUNGYEON.mp3",
+        "Raya(Slowed).mp3",
+        "FirstSong.mp3",
+        "F1.mp3",
+        "YourNewHome.mp3"
+    ],
     "score_record": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
         0,
         0,
         0,
@@ -103,6 +140,127 @@
             "best_score": 0,
             "last_score": 0,
             "total_attempts": 0
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared",
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared",
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared",
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared",
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared",
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared",
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared",
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared",
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared",
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared",
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared",
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared",
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared",
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
         }
-    ]
+    ],
+    "player_customization": {
+        "color": "lime",
+        "hit_effect": "Explosion"
+    }
 }

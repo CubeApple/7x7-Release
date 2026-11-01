@@ -1,7 +1,7 @@
 import pygame
 from pygame.surface import Surface
 from pygame.color import Color
-from typing import Any, Dict, List, Optional, Set, Tuple, Union, Sequence
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, Sequence
 import random
 import math
 import base64
@@ -28,6 +28,9 @@ GRID_EDGE_OFFSET = (GRID_SIZE - 1) * CELL_SIZE // 2
 MOVE_DURATION = 12
 NORMAL_MOVE_SPEED = CELL_SIZE / (MOVE_DURATION - 2)
 WRAP_MOVE_SPEED = CELL_SIZE * (GRID_SIZE - 1) / (MOVE_DURATION - 2)
+# 장애물 속도와 렌더링 보간을 조절하는 설정입니다.
+BALL_SPEED_SCALE = 1.32
+PLAYER_RENDER_SMOOTHING_SPEED = 36.0
 display_size = [1200, 900]
 FONT_PATH = "font/Jua-Regular.ttf"
 SAVE_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "7x7_data.json")
@@ -38,6 +41,8 @@ MAIN_RHYTHM_DATA_PATH = os.path.join(
 )
 # 레이저 본체와 빔을 따로 그리므로 본체 위치를 유지한 채 화면 너머까지 빔을 늘립니다.
 LASER_LENGTH = max(display_size) + CELL_SIZE * 2
+LASER_BEAM_DURATION_SECONDS = 0.4
+LASER_RETRACT_SPEED = 7.5 * ELEMENT_SCALE
 dis = pygame.display.set_mode(display_size, pygame.SRCALPHA)
 pygame.display.set_caption("7x7")
 pygame.mixer.music.load("music/Sunburst_NCS.mp3")
@@ -49,30 +54,83 @@ MUSIC_2 = "music/MintParfait.mp3"
 MUSIC_3 = "music/SmokedTurkeyRag.mp3"
 MUSIC_4 = "music/DaDiDuDonut.mp3"
 MUSIC_5 = "music/Butterfly.mp3"
-MUSIC_6 = "music/MyLittleHero.mp3"
-MUSIC_7 = "music/PixelPig.mp3"
-MUSIC_8 = "music/NyanCat.mp3"
-MUSIC_9 = "music/TheWorldRevolvong.mp3"
-MUSIC_10 = "music/Megalovania.mp3"
-MAX_LEVEL = 10
+MUSIC_6 = "music/FizzyPixel.mp3"
+MUSIC_7 = "music/MyLittleHero.mp3"
+MUSIC_8 = "music/PixelPig.mp3"
+MUSIC_9 = "music/Chess.mp3"
+MUSIC_10 = "music/AmongUsTrapRemix.mp3"
+MUSIC_11 = "music/TheWorldRevolvong.mp3"
+MUSIC_12 = "music/Megalovania.mp3"
+MUSIC_13 = "music/Enemy.mp3"
+MUSIC_14 = "music/NyanCat.mp3"
+MUSIC_15 = "music/EEEAAAOOO.mp3"
+MUSIC_16 = "music/LemonOiia.mp3"
+MUSIC_17 = "music/Unity.mp3"
+MUSIC_18 = "music/Xenogenesis.mp3"
+MUSIC_19 = "music/PUNGYEON.mp3"
+MUSIC_20 = "music/Raya(Slowed).mp3"
+MUSIC_21 = "music/FirstSong.mp3"
+MUSIC_22 = "music/F1.mp3"
+MUSIC_23 = "music/YourNewHome.mp3"
+MAX_LEVEL = 23
 GAME_DATA_VERSION = 1
 MAIN_RHYTHM_DATA_VERSION = 1
-# 0부터 세는 레벨 인덱스입니다. 6·10레벨 보스 해금 조건에서 사용합니다.
-BOSS_LEVEL_INDICES = (5, MAX_LEVEL - 1)
-BOSS_6_UNLOCK_REQUIRED_PROGRESS = 30.0
-BOSS_10_UNLOCK_REQUIRED_LEVEL_INDEX = 8
-MUSIC_TRACKS = (MUSIC_1, MUSIC_2, MUSIC_3, MUSIC_4, MUSIC_5, MUSIC_6, MUSIC_7, MUSIC_8, MUSIC_9, MUSIC_10)
+# 보스 목록·조건 딕셔너리의 키는 0부터, 조건 안의 선행 스테이지 번호는 1부터 셉니다.
+MUSIC_TRACKS = (
+    MUSIC_1, MUSIC_2, MUSIC_3, MUSIC_4, MUSIC_5, MUSIC_6,
+    MUSIC_7, MUSIC_8, MUSIC_9, MUSIC_10, MUSIC_11, MUSIC_12,
+    MUSIC_13, MUSIC_14, MUSIC_15, MUSIC_16, MUSIC_17, MUSIC_18,
+    MUSIC_19, MUSIC_20, MUSIC_21, MUSIC_22, MUSIC_23
+)
+TRACK_IDS = tuple(os.path.basename(track) for track in MUSIC_TRACKS)
+# 구버전 저장 파일에는 10곡의 이전 순서로 기록되어 있으므로 곡 ID로 새 위치에 옮깁니다.
+LEGACY_TRACK_IDS = (
+    "Sunburst_NCS.mp3",
+    "MintParfait.mp3",
+    "SmokedTurkeyRag.mp3",
+    "DaDiDuDonut.mp3",
+    "Butterfly.mp3",
+    "MyLittleHero.mp3",
+    "PixelPig.mp3",
+    "NyanCat.mp3",
+    "TheWorldRevolvong.mp3",
+    "Megalovania.mp3"
+)
+BOSS_LEVEL_INDICES = (6, 11, 21, 22)
+# 요구하는 진행률은 해당 보스를 제외한 스테이지의 최고 진행률 기준입니다.
+BOSS_PROGRESS_REQUIREMENTS = {
+    6: (tuple(range(1, 7)), 30.0),
+    21: (tuple(range(17, 22)), 30.0),
+    22: (tuple(range(1, 23)), 20.0)
+}
+# 12번 보스는 10·11번 스테이지를 각각 완주해야 해금됩니다.
+BOSS_CLEAR_REQUIREMENTS = {
+    11: (10, 11)
+}
 LEVEL_NAMES = (
     "Sunburst",
-    "MintParfait",
-    "SmokedTurkeyRag",
-    "DaDiDuDonut",
+    "Mint Parfait",
+    "Smoked Turkey Rag",
+    "Da-Di-Du Donut",
     "Butterfly",
-    "MyLittleHero",
-    "PixelPig",
-    "NyanCat",
-    "TheWorldRevolving",
+    "Fizzy Pixel",
+    "My Little Hero",
+    "Pixel Pig",
+    "Chess",
+    "Among Us Trap Theme",
+    "The World Revolving",
     "Megalovania",
+    "Enemy (Epic ver)",
+    "Nyan Cat",
+    "EEEAAAOOO",
+    "Lemon Oiia",
+    "Unity",
+    "Xenogenesis",
+    "풍년",
+    "Raya (Slowed)",
+    "First Song",
+    "F1",
+    "Your New Home (Epic ver)"
 )
 LEVEL_CREATORS = (
     "NCS",
@@ -80,11 +138,24 @@ LEVEL_CREATORS = (
     "a_hisa",
     "a_hisa",
     "a_hisa",
+    "기타/기본",
     "a_hisa",
     "Di Young",
-    "?",
+    "joyful",
+    "Leonz",
     "Toby Fox",
     "Toby Fox",
+    "Samuel Kim",
+    "daniwell",
+    "MyFuckinMess",
+    "OIIA Cat",
+    "TheFatRat",
+    "TheFatRat",
+    "국립국악원",
+    "Zericxxn",
+    "Roga.",
+    "Hans Zimmer",
+    "Carameii"
 )
 # 게임 화면 상태: 홈/플레이/일시정지는 이벤트 처리와 업데이트 흐름을 구분합니다.
 STATE_HOME = "home"
@@ -133,7 +204,7 @@ if (
     or MAIN_RHYTHM_SAMPLE_INTERVAL <= 0
     or SPECTRUM_BAND_COUNT != 24
     or main_rhythm_data.get("feature_stride") != FEATURE_STRIDE
-    or not 0 < MAIN_RHYTHM_TRACK_COUNT <= MAX_LEVEL
+    or MAIN_RHYTHM_TRACK_COUNT != MAX_LEVEL
     or len(MAIN_RHYTHM_FRAME_COUNTS) != MAIN_RHYTHM_TRACK_COUNT
     or len(MAIN_RHYTHM_ONSETS) != MAIN_RHYTHM_TRACK_COUNT
     or main_rhythm_data["songs"] != [
@@ -167,16 +238,26 @@ if (
 # ============================================================================
 # 화면 연출·조작·장애물 타이밍 설정: 플레이 감각 조정은 이 상수부터 확인하세요.
 # ============================================================================
-SPECTRUM_BAR_MAX_LENGTH = 92
+SPECTRUM_BAR_MAX_LENGTH = 104
 SPECTRUM_BAR_HEIGHT = 7
 SPECTRUM_BAR_TOP = 148
 SPECTRUM_BAR_SPACING = 25
-SPECTRUM_ATTACK_SPEED = 22.0
+SPECTRUM_ATTACK_SPEED = 28.0
 SPECTRUM_RELEASE_SPEED = 9.0
-SPECTRUM_BAR_COLORS = (
-    (255, 255, 255),
-    (205, 205, 205),
-    (235, 235, 235)
+SPECTRUM_AGC_ATTACK_SPEED = 12.0
+SPECTRUM_AGC_RELEASE_SPEED = 1.1
+SPECTRUM_AGC_INITIAL_PEAK = 160.0
+SPECTRUM_AGC_PEAK_FLOOR = 80.0
+SPECTRUM_AGC_TARGET_LEVEL = 205.0
+SPECTRUM_AGC_MAX_LEVEL = 220.0
+# 대역 순서대로 짙은 실버에서 밝은 화이트로 이어지는 기본 색상입니다.
+SPECTRUM_BAR_COLORS = tuple(
+    (
+        round(166 + 72 * band / max(1, SPECTRUM_BAND_COUNT - 1)),
+        round(173 + 72 * band / max(1, SPECTRUM_BAND_COUNT - 1)),
+        round(184 + 71 * band / max(1, SPECTRUM_BAND_COUNT - 1))
+    )
+    for band in range(SPECTRUM_BAND_COUNT)
 )
 ESC_HOME_HOLD_SECONDS = 1.0
 RESTART_HOLD_SECONDS = ESC_HOME_HOLD_SECONDS
@@ -242,7 +323,7 @@ CROWN_IMAGE = pygame.transform.smoothscale(
 # ----------------------------------------------------------------------------
 def get_music_visual_features(playback_ms: int, level: int) -> Tuple[float, float, Tuple[float, ...]]:
     """현재 음악 시점의 음높이, 온셋, 주파수 대역을 부드럽게 보간합니다."""
-    if level > MAIN_RHYTHM_TRACK_COUNT:
+    if not 1 <= level <= MAIN_RHYTHM_TRACK_COUNT:
         # 분석 데이터가 등록되지 않은 곡은 절차적 리듬으로 시각 효과를 유지합니다.
         seconds = max(0, playback_ms) / 1000.0
         beat_phase = math.tau * seconds * (1.7 + level * 0.035)
@@ -267,15 +348,24 @@ def get_music_visual_features(playback_ms: int, level: int) -> Tuple[float, floa
     if first_index == frame_count - 1:
         return (
             float(frames[first_offset]),
-            float(frames[first_offset + 1]),
-            tuple(float(value) for value in frames[first_offset + 2:first_offset + FEATURE_STRIDE])
+            min(255.0, float(frames[first_offset + 1]) * 1.15),
+            tuple(
+                float(value)
+                for value in frames[first_offset + 2:first_offset + FEATURE_STRIDE]
+            )
         )
 
     fraction = sample_position - first_index
     next_offset = first_offset + FEATURE_STRIDE
     return (
         frames[first_offset] + (frames[next_offset] - frames[first_offset]) * fraction,
-        frames[first_offset + 1] + (frames[next_offset + 1] - frames[first_offset + 1]) * fraction,
+        min(
+            255.0,
+            (
+                frames[first_offset + 1]
+                + (frames[next_offset + 1] - frames[first_offset + 1]) * fraction
+            ) * 1.15
+        ),
         tuple(
             frames[first_offset + index]
             + (frames[next_offset + index] - frames[first_offset + index]) * fraction
@@ -292,8 +382,8 @@ def draw_main_rhythm_polygon(
 ) -> None:
     """그리드가 비치는 채움과 푸른 기가 도는 선명한 윤곽의 정십이각형을 그립니다."""
     visual_effect_layer.fill((0, 0, 0, 0))
-    pitch_amount = max(0.0, min(1.0, (pitch - 60.0) / 30.0))
-    radius = (315.0 + pitch_amount * 52.0 + onset_strength / 255.0 * 18.0)
+    pitch_amount = max(0.0, min(1.0, (pitch - 60.0) / 24.0))
+    radius = (315.0 + pitch_amount * 58.0 + onset_strength / 255.0 * 28.0)
     rotation = playback_ms * 0.00004 + (pitch - 69.0) * 0.002
     center = (display_size[0] // 2, display_size[1] // 2)
     points = [
@@ -303,7 +393,7 @@ def draw_main_rhythm_polygon(
         )
         for index in range(12)
     ]
-    alpha = round(76 + onset_strength / 255.0 * 24)
+    alpha = round(82 + onset_strength / 255.0 * 38)
     flash = max(0.0, min(1.0, record_flash))
     fill_color = (
         round(151 + (255 - 151) * flash),
@@ -360,6 +450,14 @@ def draw_spectrum_bars(levels: Sequence[float], record_flash: float = 0.0) -> No
             (12, y, bar_length, SPECTRUM_BAR_HEIGHT),
             border_radius=3
         )
+        highlight_color = tuple(min(255, channel + 25) for channel in color[:3]) + (150,)
+        pygame.draw.line(
+            visual_effect_layer,
+            highlight_color,
+            (14, y + 1),
+            (10 + bar_length, y + 1),
+            1
+        )
         pygame.draw.rect(
             visual_effect_layer,
             glow_color,
@@ -377,7 +475,47 @@ def draw_spectrum_bars(levels: Sequence[float], record_flash: float = 0.0) -> No
             (display_size[0] - 12 - bar_length, y, bar_length, SPECTRUM_BAR_HEIGHT),
             border_radius=3
         )
+        pygame.draw.line(
+            visual_effect_layer,
+            highlight_color,
+            (display_size[0] - 14, y + 1),
+            (display_size[0] - 10 - bar_length, y + 1),
+            1
+        )
     dis.blit(visual_effect_layer, (0, 0))
+
+
+def update_spectrum_levels(
+    targets: Sequence[float],
+    levels: List[float],
+    peak_levels: List[float],
+    delta_time: float
+) -> None:
+    """대역별 피크를 천천히 추적해 자동 이득을 맞추고 표시값을 부드럽게 보간합니다."""
+    for band, target in enumerate(targets):
+        peak = peak_levels[band]
+        peak_speed = (
+            SPECTRUM_AGC_ATTACK_SPEED
+            if target > peak
+            else SPECTRUM_AGC_RELEASE_SPEED
+        )
+        peak_blend = 1.0 - math.exp(-peak_speed * delta_time)
+        peak += (target - peak) * peak_blend
+        peak_levels[band] = peak
+
+        # 피크를 기준으로 크기를 보정하되, 조용한 대역의 과도한 증폭은 바닥값으로 제한합니다.
+        normalized_target = min(
+            SPECTRUM_AGC_MAX_LEVEL,
+            target * SPECTRUM_AGC_TARGET_LEVEL
+            / max(SPECTRUM_AGC_PEAK_FLOOR, peak)
+        )
+        level_speed = (
+            SPECTRUM_ATTACK_SPEED
+            if normalized_target > levels[band]
+            else SPECTRUM_RELEASE_SPEED
+        )
+        level_blend = 1.0 - math.exp(-level_speed * delta_time)
+        levels[band] += (normalized_target - levels[band]) * level_blend
 
 
 # ----------------------------------------------------------------------------
@@ -423,21 +561,26 @@ def get_best_level_progress(level_index: int) -> float:
 
 
 def is_boss_level_unlocked(level_index: int) -> bool:
-    """각 보스 단계의 해금 조건을 검사합니다."""
+    """현재 보스의 진행률 또는 선행 스테이지 클리어 조건을 검사합니다."""
     if level_index in debug_boss_unlock_overrides:
         return debug_boss_unlock_overrides[level_index]
-    if level_index == 5:
+    if level_index in BOSS_PROGRESS_REQUIREMENTS:
+        required_levels, minimum_progress = BOSS_PROGRESS_REQUIREMENTS[level_index]
         return all(
-            get_best_level_progress(required_level) >= BOSS_6_UNLOCK_REQUIRED_PROGRESS
-            for required_level in range(5)
+            get_best_level_progress(required_level - 1) >= minimum_progress
+            for required_level in required_levels
         )
-    if level_index == MAX_LEVEL - 1:
-        return level_stats[BOSS_10_UNLOCK_REQUIRED_LEVEL_INDEX]["cleared"]
+    if level_index in BOSS_CLEAR_REQUIREMENTS:
+        required_levels = BOSS_CLEAR_REQUIREMENTS[level_index]
+        return all(
+            level_stats[required_level - 1]["cleared"]
+            for required_level in required_levels
+        )
     return True
 
 
 def is_level_locked(level_index: int) -> bool:
-    """두 보스 단계에만 해금 조건을 적용합니다."""
+    """보스 단계라면 각 단계에 설정된 해금 조건을 적용합니다."""
     return (
         level_index in BOSS_LEVEL_INDICES
         and not is_boss_level_unlocked(level_index)
@@ -538,13 +681,20 @@ def draw_home_menu(
         15
     )
     draw_ui_text(dis, "UP / DOWN  Select stage", LIGHT_GRAY, (menu_text_x, 790), 16)
+    draw_ui_text(dis, "P  Player customize", LIGHT_GRAY, (menu_text_x, 842), 14)
     if is_level_locked(selected_level):
-        if selected_level == 5:
-            unlock_message = "LOCKED - CLEAR STAGES 1-5 AT 30%+"
-            unlock_detail = "TO UNLOCK THE STAGE 6 BOSS"
+        if selected_level == 6:
+            unlock_message = "LOCKED - CLEAR STAGES 1-6 AT 30%+"
+            unlock_detail = "TO UNLOCK THE STAGE 7 BOSS"
+        elif selected_level == 11:
+            unlock_message = "LOCKED - CLEAR STAGES 10 AND 11"
+            unlock_detail = "TO UNLOCK THE STAGE 12 BOSS"
+        elif selected_level == 21:
+            unlock_message = "LOCKED - CLEAR STAGES 17-21 AT 30%+"
+            unlock_detail = "TO UNLOCK THE STAGE 22 BOSS"
         else:
-            unlock_message = "LOCKED - CLEAR STAGE 9"
-            unlock_detail = "TO UNLOCK THE STAGE 10 BOSS"
+            unlock_message = "LOCKED - CLEAR STAGES 1-22 AT 20%+"
+            unlock_detail = "TO UNLOCK THE STAGE 23 BOSS"
         draw_ui_text(
             dis,
             unlock_message,
@@ -568,6 +718,92 @@ def draw_home_menu(
     if fade_alpha > 0:
         home_fade_surface.fill((0, 0, 0, min(255, fade_alpha)))
         dis.blit(home_fade_surface, (0, 0))
+
+
+@lru_cache(maxsize=1)
+def _get_customization_panel_surface() -> Surface:
+    """커스터마이징 패널의 반투명 배경을 한 번만 생성합니다."""
+    panel = pygame.Surface((350, 286), pygame.SRCALPHA)
+    pygame.draw.rect(panel, (12, 16, 23, 218), panel.get_rect(), border_radius=14)
+    pygame.draw.rect(
+        panel,
+        (133, 255, 160, 100),
+        panel.get_rect(),
+        width=1,
+        border_radius=14
+    )
+    return panel
+
+
+def draw_customization_screen(
+    selected_item: int,
+    move_mode: bool,
+    transition: float
+) -> None:
+    """플레이어 미리보기와 현재 커스터마이징 선택 상태를 그립니다."""
+    panel = _get_customization_panel_surface()
+    panel_x = display_size[0] - panel.get_width() - 28
+    panel_y = display_size[1] // 2 - panel.get_height() // 2
+    dis.blit(panel, (panel_x, panel_y))
+
+    draw_ui_text(dis, "PLAYER CUSTOMIZATION", WHITE, (panel_x + 24, panel_y + 24), 22)
+    accent = (133, round(180 + 75 * max(0.0, min(1.0, transition))), 160)
+    draw_ui_text(
+        dis,
+        "MOVE TEST" if move_mode else "CUSTOMIZE",
+        accent,
+        (panel_x + 24, panel_y + 58),
+        15
+    )
+    color_selected = selected_item == 0
+    effect_selected = selected_item == 1
+    color_name = PLAYER_CUSTOMIZATION["color"]
+    effect_name = PLAYER_CUSTOMIZATION["hit_effect"]
+    draw_ui_text(
+        dis,
+        f"{'> ' if color_selected and not move_mode else '  '}Color: {color_name.title()}",
+        PLAYER_COLOR_MAP[color_name] if color_selected else LIGHT_GRAY,
+        (panel_x + 24, panel_y + 108),
+        19
+    )
+    draw_ui_text(
+        dis,
+        f"{'> ' if effect_selected and not move_mode else '  '}Hit Effect: {effect_name}",
+        WHITE if effect_selected else LIGHT_GRAY,
+        (panel_x + 24, panel_y + 148),
+        18
+    )
+    if move_mode:
+        draw_ui_text(
+            dis,
+            "Arrow keys: move on the grid",
+            LIGHT_GRAY,
+            (panel_x + 24, panel_y + 202),
+            14
+        )
+    else:
+        draw_ui_text(
+            dis,
+            "UP / DOWN: choose item",
+            LIGHT_GRAY,
+            (panel_x + 24, panel_y + 202),
+            14
+        )
+        draw_ui_text(
+            dis,
+            "LEFT / RIGHT: change option",
+            LIGHT_GRAY,
+            (panel_x + 24, panel_y + 224),
+            14
+        )
+    draw_ui_text(
+        dis,
+        "ESC: toggle mode  |  P: map select",
+        LIGHT_GRAY,
+        (display_size[0] // 2, display_size[1] - 34),
+        14,
+        center=True
+    )
 
 
 # ----------------------------------------------------------------------------
@@ -842,27 +1078,35 @@ class Player(object):
         self,
         position: Tuple[int, int] = (display_size[0]//2, display_size[1]//2),
         hp: int = 3,
-        max_afterimage: int = 10
+        max_afterimage: int = 10,
+        training_mode: bool = False
         ):
         # 이동 중 좌표를 수정할 수 있도록 전달받은 위치를 새 리스트로 복사합니다.
         self.pos = list(position)
+        self.render_pos = [float(position[0]), float(position[1])]
         self.move_stack = 0
         self.move = [0, 0]
         self.move_rebound = [0.0, 0.0]
         self.hp = hp
         self.hp_minus = False
         self.hp_stack = 100
-        self.color = WHITE
+        self.color = PLAYER_COLOR_MAP[PLAYER_CUSTOMIZATION["color"]]
         self.invincible = False
         self.size = 50-(3-self.hp)*6
         self.afterimage = []
         self.afterimage_max = max_afterimage
+        self.training_mode = training_mode
+        self.hit_particles: List[List[float]] = []
+        self.hit_flash_remaining = 0.0
         
-        self.ai_dis = pygame.Surface((100, 100), pygame.SRCALPHA)
-        self.dis = pygame.Surface((100, 100), pygame.SRCALPHA)
+        self.ai_dis = pygame.Surface((300, 300), pygame.SRCALPHA)
+        self.dis = pygame.Surface((300, 300), pygame.SRCALPHA)
     
-    def update(self):
+    def update(self, delta_time: Optional[float] = None):
         global pause, hit_stack
+        if delta_time is None:
+            delta_time = 1.0 / max(1, tps)
+        delta_time = max(0.0, min(delta_time, 0.05))
         if self.move_stack != 0:
             movement = self.move_rebound if self.move_stack == 1 else self.move
             self.pos[0] += movement[0]
@@ -883,9 +1127,11 @@ class Player(object):
 
         if self.hp_minus:
             if self.hp_stack == 100:
-                self.hp -= 1
-                if self.hp == 0:
-                    pause = True
+                self._start_hit_effect()
+                if not self.training_mode:
+                    self.hp -= 1
+                    if self.hp == 0:
+                        pause = True
             
             self.hp_stack -= 1/tps*50
         
@@ -895,6 +1141,19 @@ class Player(object):
             hit_stack = False
 
         self.size = 50-(3-max(self.hp, 0))*6
+        self._update_hit_particles(delta_time)
+        self.hit_flash_remaining = max(
+            0.0,
+            self.hit_flash_remaining - delta_time
+        )
+        # 논리 위치와 화면 위치를 분리해 작은 위치 변화도 매끄럽게 렌더링합니다.
+        blend = 1.0 - math.exp(-PLAYER_RENDER_SMOOTHING_SPEED * delta_time)
+        for axis in range(2):
+            self.render_pos[axis] += (
+                self.pos[axis] - self.render_pos[axis]
+            ) * blend
+            if abs(self.pos[axis] - self.render_pos[axis]) < 0.05:
+                self.render_pos[axis] = float(self.pos[axis])
 
     def get_rect(self) -> pygame.Rect:
         hitbox_size = round((self.size - 10) * ELEMENT_SCALE)
@@ -905,23 +1164,113 @@ class Player(object):
             hitbox_size
         )
 
+    def get_hitbox_radius(self) -> float:
+        """복합 히트박스의 원형 영역 반지름을 반환합니다."""
+        return max(0.0, (self.size - 10) * ELEMENT_SCALE / 2)
+
+    def get_hitbox_square_half_size(self) -> float:
+        """원형 영역과 함께 사용하는 정사각형 영역의 반쪽 길이입니다."""
+        return self.get_hitbox_radius()
+
+    def get_hitbox_square(self) -> pygame.Rect:
+        """복합 히트박스의 정사각형 영역을 현재 플레이어 위치에 만듭니다."""
+        half_size = self.get_hitbox_square_half_size()
+        return pygame.Rect(
+            round(self.pos[0] - half_size),
+            round(self.pos[1] - half_size),
+            max(1, round(half_size * 2)),
+            max(1, round(half_size * 2))
+        )
+
+    def _start_hit_effect(self) -> None:
+        """선택된 피격 효과에 맞춰 플레이어 주변에 파티클을 생성합니다."""
+        effect = PLAYER_CUSTOMIZATION["hit_effect"]
+        if effect == "None":
+            return
+
+        particle_count = 32 if effect == "Explosion" else 18
+        speed_scale = 1.8 if effect == "Explosion" else 1.0
+        if effect == "Explosion":
+            self.hit_flash_remaining = 0.22
+        for index in range(particle_count):
+            angle = math.tau * index / particle_count + random.uniform(-0.15, 0.15)
+            speed = random.uniform(90.0, 210.0) * speed_scale
+            lifetime = random.uniform(0.35, 0.65) if effect == "Explosion" else 0.45
+            self.hit_particles.append([
+                float(self.pos[0]),
+                float(self.pos[1]),
+                math.cos(angle) * speed,
+                math.sin(angle) * speed,
+                lifetime,
+                lifetime,
+                float(index % 2)
+            ])
+
+    def _update_hit_particles(self, delta_time: float) -> None:
+        """파티클을 갱신하고 수명이 끝난 입자를 제거합니다."""
+        for particle in self.hit_particles[:]:
+            particle[0] += particle[2] * delta_time
+            particle[1] += particle[3] * delta_time
+            particle[3] += 180.0 * delta_time
+            particle[4] -= delta_time
+            if particle[4] <= 0:
+                self.hit_particles.remove(particle)
+
     def draw(self):
-        for r in range(10): pygame.draw.circle(self.dis, set_alpha(self.color, r/9*255), (50, 50), 33-r)
-        if hitbox: pygame.draw.lines(self.dis, BLUE, True, ((30, 30), (70, 30), (70, 70), (30, 70)), 1)
+        # 연두색 후광을 먼저 그리고, 흰색 코어를 별도 레이어로 겹칩니다.
+        self.dis.fill((0, 0, 0, 0))
+        glow_surface, core_surface = _get_player_vfx_surfaces(self.color)
+        self.dis.blit(glow_surface, (0, 0))
+        self.dis.blit(core_surface, (0, 0))
+        if self.hit_flash_remaining > 0.0:
+            flash_progress = 1.0 - self.hit_flash_remaining / 0.22
+            flash_radius = round(86 + 58 * flash_progress)
+            flash_alpha = round(150 * (1.0 - flash_progress))
+            pygame.draw.circle(
+                self.dis,
+                (*self.color, flash_alpha),
+                (150, 150),
+                flash_radius,
+                max(1, round(7 * (1.0 - flash_progress)))
+            )
+        if hitbox:
+            hitbox_radius = round(
+                self.get_hitbox_radius()
+                * 300
+                / max(1, self.size * 2 * ELEMENT_SCALE)
+            )
+            pygame.draw.circle(self.dis, BLUE, (150, 150), hitbox_radius, 3)
+            square_half = round(
+                self.get_hitbox_square_half_size()
+                * 300
+                / max(1, self.size * 2 * ELEMENT_SCALE)
+            )
+            pygame.draw.rect(
+                self.dis,
+                ORANGE,
+                (
+                    150 - square_half,
+                    150 - square_half,
+                    square_half * 2,
+                    square_half * 2
+                ),
+                2
+            )
 
         self.hp_stack_seq = 100-self.hp_stack
-        if 0 < self.hp_stack_seq <= 20: self.dis.set_alpha(64)
-        elif 20 < self.hp_stack_seq <= 40: self.dis.set_alpha(255)
-        elif 40 < self.hp_stack_seq <= 60: self.dis.set_alpha(64)
-        elif 60 < self.hp_stack_seq <= 80: self.dis.set_alpha(255)
-        elif 80 < self.hp_stack_seq <= 100: self.dis.set_alpha(64)
-        else: self.dis.set_alpha(255)
+        if 0 < self.hp_stack_seq <= 20: player_alpha = 64
+        elif 20 < self.hp_stack_seq <= 40: player_alpha = 255
+        elif 40 < self.hp_stack_seq <= 60: player_alpha = 64
+        elif 60 < self.hp_stack_seq <= 80: player_alpha = 255
+        elif 80 < self.hp_stack_seq <= 100: player_alpha = 64
+        else: player_alpha = 255
 
         render_size = max(1, round(self.size * 2 * ELEMENT_SCALE))
-        self.player_painting = pygame.transform.scale(
+        self.player_painting = pygame.transform.smoothscale(
             self.dis,
             (render_size, render_size)
         )
+        self.player_painting.set_alpha(player_alpha)
 
         for ai in self.afterimage:
             self.ai_dis = self.player_painting.copy()
@@ -931,7 +1280,148 @@ class Player(object):
             self.ai_dis.set_alpha(ai[1])
             dis.blit(self.ai_dis, self.ai_dis.get_rect(center=(ai[0][0], ai[0][1])))
 
-        dis.blit(self.player_painting, self.player_painting.get_rect(center=(self.pos[0], self.pos[1])))
+        for particle in self.hit_particles:
+            remaining_ratio = max(0.0, particle[4] / particle[5])
+            particle_size = max(1, round(5 * remaining_ratio))
+            sprite = _get_hit_particle_sprite(
+                self.color,
+                bool(particle[6]),
+                particle_size
+            )
+            sprite.set_alpha(round(255 * remaining_ratio))
+            dis.blit(
+                sprite,
+                sprite.get_rect(
+                    center=(round(particle[0]), round(particle[1]))
+                )
+            )
+
+        dis.blit(
+            self.player_painting,
+            self.player_painting.get_rect(
+                center=(round(self.render_pos[0]), round(self.render_pos[1]))
+            )
+        )
+
+
+@lru_cache(maxsize=16)
+def _get_player_vfx_surfaces(
+    glow_color: Tuple[int, int, int]
+) -> Tuple[Surface, Surface]:
+    """색상별 연두빛 후광과 흰색 코어를 방사형 알파 표면으로 캐시합니다."""
+    surface_size = 300
+    center = (surface_size - 1) / 2
+    face_radius = 84.0
+    glow_radius = 142.0
+    glow_surface = pygame.Surface(
+        (surface_size, surface_size),
+        pygame.SRCALPHA
+    )
+    core_surface = pygame.Surface(
+        (surface_size, surface_size),
+        pygame.SRCALPHA
+    )
+
+    for y in range(surface_size):
+        for x in range(surface_size):
+            distance = math.hypot(x - center, y - center)
+            if distance < glow_radius:
+                # 바깥 후광은 가장자리로 갈수록 알파가 빠르게 낮아집니다.
+                glow_fade = 1.0 - (distance / glow_radius) ** 2
+                glow_alpha = round(44 * glow_fade ** 2.4)
+                if glow_alpha > 0:
+                    glow_surface.set_at((x, y), (*glow_color, glow_alpha))
+
+            if distance < face_radius:
+                # 코어는 흰색을 유지하고 원의 테두리에서만 부드럽게 페이드됩니다.
+                core_fade = 1.0 - (distance / face_radius) ** 2
+                core_alpha = round(255 * core_fade ** 1.8)
+                if core_alpha > 0:
+                    core_surface.set_at(
+                        (x, y),
+                        (*WHITE, core_alpha)
+                    )
+
+    return glow_surface, core_surface
+
+
+@lru_cache(maxsize=128)
+def _get_hit_particle_sprite(
+    color: Tuple[int, int, int],
+    square: bool,
+    size: int
+) -> Surface:
+    """색상·모양·크기별 작은 파티클 이미지를 재사용합니다."""
+    side = size * 2 + 2
+    surface = pygame.Surface((side, side), pygame.SRCALPHA)
+    if square:
+        pygame.draw.rect(surface, (*color, 255), (1, 1, size * 2, size * 2))
+    else:
+        pygame.draw.circle(surface, (*color, 255), (side // 2, side // 2), size)
+    return surface
+
+
+def _circles_overlap(
+    center_a: Tuple[float, float],
+    radius_a: float,
+    center_b: Tuple[float, float],
+    radius_b: float
+) -> bool:
+    """두 원의 중심 거리로 원형 충돌 여부를 판정합니다."""
+    dx = center_a[0] - center_b[0]
+    dy = center_a[1] - center_b[1]
+    combined_radius = radius_a + radius_b
+    return dx * dx + dy * dy <= combined_radius * combined_radius
+
+
+def _circle_overlaps_rect(
+    center: Tuple[float, float],
+    radius: float,
+    rect: pygame.Rect
+) -> bool:
+    """플레이어 원과 직사각형 레이저·통나무 사이의 가장 가까운 점을 검사합니다."""
+    closest_x = max(rect.left, min(center[0], rect.right))
+    closest_y = max(rect.top, min(center[1], rect.bottom))
+    dx = center[0] - closest_x
+    dy = center[1] - closest_y
+    return dx * dx + dy * dy <= radius * radius
+
+
+def _damage_player_for_circle(center: Tuple[float, float], radius: float) -> None:
+    """원형 장애물과 플레이어의 원+정사각형 하이브리드 영역을 검사합니다."""
+    if (
+        player is None
+        or player.hp <= 0
+        or player.hp_minus
+        or player.invincible
+    ):
+        return
+    circle_hit = _circles_overlap(
+        center, radius, player.pos, player.get_hitbox_radius()
+    )
+    square_hit = _circle_overlaps_rect(
+        center, radius, player.get_hitbox_square()
+    )
+    if circle_hit or square_hit:
+        player.hp_minus = True
+
+
+def _damage_player_for_rect(rect: pygame.Rect) -> None:
+    """직사각형 장애물과 플레이어의 원+정사각형 영역을 검사합니다."""
+    if (
+        player is None
+        or player.hp <= 0
+        or player.hp_minus
+        or player.invincible
+    ):
+        return
+    circle_hit = _circle_overlaps_rect(
+        player.pos, player.get_hitbox_radius(), rect
+    )
+    square_hit = player.get_hitbox_square().colliderect(rect)
+    if circle_hit or square_hit:
+        player.hp_minus = True
+
 
 def player_move(
     player: Player,
@@ -982,13 +1472,13 @@ def player_move(
 
 # ----------------------------------------------------------------------------
 # 장애물 종류별 동작: 각 클래스는 해당 장애물의 이동·그리기 로직을 담당합니다.
-# 생성 주기와 레벨별 출현 빈도는 아래 spawn_enemies_by_level()에서 조절합니다.
+# 생성 주기와 레벨별 출현 빈도는 아래 spawn_level_N() 함수들에서 조절합니다.
 # ----------------------------------------------------------------------------
 class Ball(object):
     def configure(
         self,
         position: Tuple[int, int],
-        speed: Tuple[int, int] = 5
+        speed: Tuple[float, float] = (5.0, 0.0)
         ):
         self.pos = position
         self.move = speed
@@ -998,9 +1488,7 @@ class Ball(object):
     def update(self):
         self.pos = (self.pos[0]+self.move[0], self.pos[1]+self.move[1])
         self.hitbox.center = self.pos
-        if player is not None and player.get_rect().colliderect(self.hitbox):
-            if not player.hp_minus and not player.invincible:
-                player.hp_minus = True
+        _damage_player_for_circle(self.pos, ENEMY_HITBOX_SIZE / 2)
 
     def is_deleted(
         self
@@ -1054,7 +1542,8 @@ class TBall(object):
         position: Tuple[int, int, int],
         length: int,
         speed: int = 3,
-        turn: float = 1
+        turn: float = 1,
+        loop: bool = False
         ):
         self.position = position
         self.pos = position[0:2]
@@ -1062,6 +1551,7 @@ class TBall(object):
         self.length = length
         self.speed = speed/length
         self.turn = turn
+        self.loop = loop
         self.line_dis = _get_tball_ring(abs(length))
         self.stage = 0
         self.delay = tps*2
@@ -1080,12 +1570,15 @@ class TBall(object):
         if self.stage == 1:
             self.pos = [math.cos(self.angle)*self.length+self.position[0], math.sin(self.angle)*self.length+self.position[1]]
             self.angle += self.speed
-            if abs(self.angle-self.position[2]) >= self.turn*2*math.pi:
+            if self.loop and abs(self.angle - self.position[2]) >= math.tau:
+                self.angle = (
+                    self.position[2]
+                    + (self.angle - self.position[2]) % math.tau
+                )
+            elif not self.loop and abs(self.angle-self.position[2]) >= self.turn*2*math.pi:
                 self.delete = True
             self.hitbox.center = self.pos
-            if player is not None and player.get_rect().colliderect(self.hitbox):
-                if not player.hp_minus and not player.invincible:
-                    player.hp_minus = True
+            _damage_player_for_circle(self.pos, ENEMY_HITBOX_SIZE / 2)
     
     def is_deleted(
         self
@@ -1135,14 +1628,17 @@ class VBall(object):
         displacement = target_coordinate - start_coordinate
         direction = 1 if displacement >= 0 else -1
         initial_speed = abs(speed[axis])
-        apex_steps = max(2, round(2 * abs(displacement) / initial_speed) + 1)
-        initial_speed = 2 * abs(displacement) / (apex_steps - 1)
+        self.apex_steps = max(
+            2,
+            round(2 * abs(displacement) / initial_speed) + 1
+        )
+        initial_speed = 2 * abs(displacement) / (self.apex_steps - 1)
         adjusted_speed = [0.0, 0.0]
         adjusted_speed[axis] = direction * initial_speed
         self.speed = tuple(adjusted_speed)
-        self.spp = -initial_speed / apex_steps
-        self.apex_steps = apex_steps
+        self.spp = -initial_speed / self.apex_steps
         self.target_coordinate = target_coordinate
+        self.delete = False
         self.hitbox = pygame.Rect(0, 0, ENEMY_HITBOX_SIZE, ENEMY_HITBOX_SIZE)
         self.dis = ball_dis
 
@@ -1150,39 +1646,42 @@ class VBall(object):
         self
         ):
         if self.face == 0:
-            self.speed = (self.speed[0], self.speed[1]+self.spp)
-        if self.face == 1:
-            self.speed = (self.speed[0]-self.spp, self.speed[1])
-        if self.face == 2:
-            self.speed = (self.speed[0], self.speed[1]-self.spp)
-        if self.face == 3:
-            self.speed = (self.speed[0]+self.spp, self.speed[1])
-        self.pos = (self.pos[0]+self.speed[0], self.pos[1]+self.speed[1])
+            self.speed = (self.speed[0], self.speed[1] + self.spp)
+        elif self.face == 1:
+            self.speed = (self.speed[0] - self.spp, self.speed[1])
+        elif self.face == 2:
+            self.speed = (self.speed[0], self.speed[1] - self.spp)
+        else:
+            self.speed = (self.speed[0] + self.spp, self.speed[1])
+
+        self.pos = (
+            self.pos[0] + self.speed[0],
+            self.pos[1] + self.speed[1]
+        )
         if self.apex_steps > 0:
             self.apex_steps -= 1
             if self.apex_steps == 0:
                 axis = 1 if self.face in (0, 2) else 0
-                self.pos = (
-                    (self.target_coordinate, self.pos[1])
-                    if axis == 0
-                    else (self.pos[0], self.target_coordinate)
-                )
-                self.speed = (
-                    (0.0, self.speed[1])
-                    if axis == 0
-                    else (self.speed[0], 0.0)
-                )
+                if axis == 0:
+                    self.pos = (self.target_coordinate, self.pos[1])
+                    self.speed = (0.0, self.speed[1])
+                else:
+                    self.pos = (self.pos[0], self.target_coordinate)
+                    self.speed = (self.speed[0], 0.0)
         self.hitbox.center = self.pos
-        if player is not None and player.get_rect().colliderect(self.hitbox):
-            if not player.hp_minus and not player.invincible:
-                player.hp_minus = True
+        _damage_player_for_circle(self.pos, ENEMY_HITBOX_SIZE / 2)
 
     def is_deleted(
         self
         ) -> bool:
-        if not -500 < self.pos[0] < display_size[0]+500 and not -500 < self.pos[1] < display_size[1]+500:
-            return True
-        return False
+        margin = 500
+        return (
+            self.delete
+            or self.pos[0] < -margin
+            or self.pos[0] > display_size[0] + margin
+            or self.pos[1] < -margin
+            or self.pos[1] > display_size[1] + margin
+        )
 
     def draw(
         self
@@ -1233,9 +1732,7 @@ class Log(object):
         self.roll_angle += self.speed / (self.thickness / 2)
         self._update_hitbox()
 
-        if player is not None and player.get_rect().colliderect(self.hitbox):
-            if not player.hp_minus and not player.invincible:
-                player.hp_minus = True
+        _damage_player_for_rect(self.hitbox)
 
         has_left_play_area = (
             (self.face == 0 and self.hitbox.top >= display_size[1])
@@ -1322,36 +1819,33 @@ class Laser(object):
         if self.stage == 1:
             self.delay -= 1
             if self.delay <= 0:
-                self.delay = tps
+                self.delay = max(1, round(tps * LASER_BEAM_DURATION_SECONDS))
                 self.stage = 2
-        
+
         if self.stage == 2:
             self.delay -= 1
             self.hitbox = self._get_beam_rect()
-            if player is not None and player.get_rect().colliderect(self.hitbox):
-                if not player.hp_minus and not player.invincible:
-                    player.hp_minus = True
+            _damage_player_for_rect(self.hitbox)
             if self.delay <= 0:
                 self.stage = 3
-        
+
         if self.stage == 3:
             if self.face == 0:
-                self.pos = [self.pos[0], self.pos[1]-self.speed]
+                self.pos = [self.pos[0], self.pos[1]-LASER_RETRACT_SPEED]
                 if self.pos[1] <= display_size[1]//2-BOARD_HALF_SIZE-2*CELL_SIZE:
                     self.delete = True
             if self.face == 1:
-                self.pos = [self.pos[0]+self.speed, self.pos[1]]
+                self.pos = [self.pos[0]+LASER_RETRACT_SPEED, self.pos[1]]
                 if self.pos[0] >= display_size[0]//2+BOARD_HALF_SIZE+3*CELL_SIZE:
                     self.delete = True
             if self.face == 2:
-                self.pos = [self.pos[0], self.pos[1]+self.speed]
+                self.pos = [self.pos[0], self.pos[1]+LASER_RETRACT_SPEED]
                 if self.pos[1] >= display_size[1]//2+BOARD_HALF_SIZE+2*CELL_SIZE:
                     self.delete = True
             if self.face == 3:
-                self.pos = [self.pos[0]-self.speed, self.pos[1]]
+                self.pos = [self.pos[0]-LASER_RETRACT_SPEED, self.pos[1]]
                 if self.pos[0] <= display_size[0]//2-BOARD_HALF_SIZE-3*CELL_SIZE:
                     self.delete = True
-            self.speed += 0.1
     
     def is_deleted(
         self
@@ -1432,7 +1926,6 @@ class Bomb:
         """충전, 메인 폭발, 미리 정한 서브 폭탄 연쇄를 순서대로 처리합니다."""
         delta_time = max(0.0, delta_time)
         if self.state == "charging":
-            self._damage_player_in_blast_cell(target_player)
             self.charge_remaining -= delta_time
             if self.charge_remaining <= 1e-12:
                 self.state = "exploding"
@@ -1677,10 +2170,10 @@ def _draw_bomb_explosion(
     # 전체 폭발 애니메이션의 앞 20% 동안 커지고, 나머지 80% 동안 작아집니다.
     swell_progress = 0.2
     if progress <= swell_progress:
-        scale = 1.0 + 0.45 * progress / swell_progress
+        scale = 1.0 + 0.8 * progress / swell_progress
     else:
         shrink_progress = (progress - swell_progress) / (1.0 - swell_progress)
-        scale = 1.45 * (1.0 - shrink_progress)
+        scale = 1.8 * (1.0 - shrink_progress)
     if scale <= 0.02:
         return
     rotated = pygame.transform.rotate(
@@ -1729,8 +2222,27 @@ class BombManager:
         self.bombs.clear()
         self._simulation_accumulator = 0.0
 
-    def spawn(self) -> bool:
-        """폭탄이 없는 무작위 보드 칸에 메인 폭탄을 생성합니다."""
+    def spawn(
+        self,
+        row: Optional[int] = None,
+        column: Optional[int] = None,
+        direction: Optional[str] = None
+    ) -> bool:
+        """폭탄이 없는 지정 또는 무작위 보드 칸에 메인 폭탄을 생성합니다."""
+        if (row is None) != (column is None):
+            raise ValueError("폭탄 스폰 좌표는 행과 열을 함께 지정해야 합니다.")
+        if direction is not None and direction not in SPAWN_DIRECTIONS:
+            raise ValueError(f"지원하지 않는 스폰 방향입니다: {direction}")
+        if row is not None and column is not None:
+            if (
+                not isinstance(row, int)
+                or isinstance(row, bool)
+                or not isinstance(column, int)
+                or isinstance(column, bool)
+                or not (0 <= row < GRID_SIZE and 0 <= column < GRID_SIZE)
+            ):
+                raise ValueError("폭탄 스폰 좌표가 보드 범위를 벗어났습니다.")
+
         occupied_cells = {
             cell
             for bomb in self.bombs
@@ -1746,7 +2258,11 @@ class BombManager:
         if not available_cells:
             return False
 
-        row, column = random.choice(available_cells)
+        if row is None or column is None:
+            row, column = random.choice(available_cells)
+        elif (row, column) not in available_cells:
+            return False
+
         bomb = Bomb()
         bomb.configure(
             row,
@@ -1779,43 +2295,134 @@ class BombManager:
             bomb.draw()
 
 
-def spawn_ball():
-    """보드 가장자리 바깥에서 직선으로 들어오는 공을 생성합니다."""
+SPAWN_DIRECTIONS = ("top", "right", "bottom", "left")
+SPAWN_FACE_BY_DIRECTION = dict(zip(SPAWN_DIRECTIONS, range(4)))
+
+
+def get_spawn_coordinates(direction: str, lane: int) -> Tuple[int, int]:
+    """시계 방향의 1~7번 진입 레인을 보드의 (행, 열)로 바꿉니다."""
+    if direction not in SPAWN_DIRECTIONS:
+        raise ValueError(
+            f"스폰 방향은 {', '.join(SPAWN_DIRECTIONS)} 중 하나여야 합니다."
+        )
+    if (
+        not isinstance(lane, int)
+        or isinstance(lane, bool)
+        or not 1 <= lane <= GRID_SIZE
+    ):
+        raise ValueError(f"레인은 1부터 {GRID_SIZE} 사이여야 합니다.")
+
+    lane_index = lane - 1
+    if direction == "top":
+        return 0, lane_index
+    if direction == "right":
+        return lane_index, GRID_SIZE - 1
+    if direction == "bottom":
+        return GRID_SIZE - 1, GRID_SIZE - 1 - lane_index
+    return GRID_SIZE - 1 - lane_index, 0
+
+
+def _get_grid_cell_center(row: int, column: int) -> Tuple[int, int]:
+    """보드의 0부터 시작하는 행·열 인덱스를 화면 좌표 중심으로 바꿉니다."""
+    if (
+        not isinstance(row, int)
+        or isinstance(row, bool)
+        or not isinstance(column, int)
+        or isinstance(column, bool)
+        or not (0 <= row < GRID_SIZE and 0 <= column < GRID_SIZE)
+    ):
+        raise ValueError("스폰 좌표가 보드 범위를 벗어났습니다.")
+    board_left = display_size[0] // 2 - BOARD_HALF_SIZE
+    board_top = display_size[1] // 2 - BOARD_HALF_SIZE
+    return (
+        board_left + column * CELL_SIZE + CELL_SIZE // 2,
+        board_top + row * CELL_SIZE + CELL_SIZE // 2
+    )
+
+
+def _resolve_spawn_location(
+    row: Optional[int],
+    column: Optional[int],
+    direction: Optional[str]
+) -> Tuple[int, int, str]:
+    """좌표와 방향이 없으면 무작위 진입 레인을 정하고 입력을 검증합니다."""
+    if (row is None) != (column is None):
+        raise ValueError("스폰 좌표는 행과 열을 함께 지정해야 합니다.")
+    if row is None or column is None:
+        if direction is None:
+            direction = random.choice(SPAWN_DIRECTIONS)
+        row, column = get_spawn_coordinates(
+            direction,
+            random.randint(1, GRID_SIZE)
+        )
+    if direction is None:
+        direction = random.choice(SPAWN_DIRECTIONS)
+    if direction not in SPAWN_DIRECTIONS:
+        raise ValueError(
+            f"스폰 방향은 {', '.join(SPAWN_DIRECTIONS)} 중 하나여야 합니다."
+        )
+    if row is None or column is None:
+        raise ValueError("스폰 좌표를 계산할 수 없습니다.")
+    _get_grid_cell_center(row, column)
+    return row, column, direction
+
+
+def _get_spawn_edge_position(
+    row: int,
+    column: int,
+    direction: str,
+    outside_cells: int
+) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+    """진입 타일과 방향에 맞춘 화면 가장자리 좌표·기본 속도를 계산합니다."""
+    lane_x, lane_y = _get_grid_cell_center(row, column)
+    board_left = display_size[0] // 2 - BOARD_HALF_SIZE
+    board_right = display_size[0] // 2 + BOARD_HALF_SIZE
+    board_top = display_size[1] // 2 - BOARD_HALF_SIZE
+    board_bottom = display_size[1] // 2 + BOARD_HALF_SIZE
+    if direction == "top":
+        return (lane_x, board_top - outside_cells * CELL_SIZE), (0, 1)
+    if direction == "right":
+        return (board_right + outside_cells * CELL_SIZE, lane_y), (-1, 0)
+    if direction == "bottom":
+        return (lane_x, board_bottom + outside_cells * CELL_SIZE), (0, -1)
+    return (board_left - outside_cells * CELL_SIZE, lane_y), (1, 0)
+
+
+def spawn_ball(
+    row: Optional[int] = None,
+    col: Optional[int] = None,
+    direction: Optional[str] = None
+) -> None:
+    """선택한 시계 방향 레인에서 보드 안으로 직선 공을 생성합니다."""
+    row, col, direction = _resolve_spawn_location(row, col, direction)
+    position, travel = _get_spawn_edge_position(row, col, direction, 3)
+    speed = (
+        travel[0] * 3 * BALL_SPEED_SCALE,
+        travel[1] * 3 * BALL_SPEED_SCALE
+    )
     for _ in range(20):
         ball = Ball()
-        ball_position = random.randint(0, GRID_SIZE - 1)
-        lane_offset = -GRID_EDGE_OFFSET + CELL_SIZE * ball_position
-        move_rotate = random.randint(0, 1)
-        if random.randint(0, 1):
-            position = (
-                display_size[0] // 2
-                - (BOARD_HALF_SIZE + 3 * CELL_SIZE) * (2 * move_rotate - 1),
-                display_size[1] // 2 + lane_offset
-            )
-            speed = (3 * (2 * move_rotate - 1), 0)
-        else:
-            position = (
-                display_size[0] // 2 + lane_offset,
-                display_size[1] // 2
-                - (BOARD_HALF_SIZE + 3 * CELL_SIZE) * (2 * move_rotate - 1)
-            )
-            speed = (0, 3 * (2 * move_rotate - 1))
         ball.configure(position, speed)
         if _try_add_enemy(ball):
             return
 
-def spawn_tball():
-    """무작위 칸을 중심으로 회전하는 TBall을 생성합니다."""
+def spawn_tball(
+    row: Optional[int] = None,
+    col: Optional[int] = None,
+    direction: Optional[str] = None
+) -> None:
+    """선택한 타일을 중심으로 회전하는 TBall을 생성합니다."""
+    row, col, direction = _resolve_spawn_location(row, col, direction)
+    center_x, center_y = _get_grid_cell_center(row, col)
+    angle_by_direction = {
+        "top": math.pi / 2,
+        "right": math.pi,
+        "bottom": -math.pi / 2,
+        "left": 0.0
+    }
     for _ in range(20):
         tball = TBall()
-        # TBall은 보드 안의 칸 중심 중 하나에서 원형 궤적을 시작합니다.
-        tball_pos = [
-            display_size[0] // 2 - GRID_EDGE_OFFSET
-            + CELL_SIZE * random.randint(0, GRID_SIZE - 1),
-            display_size[1] // 2 - GRID_EDGE_OFFSET
-            + CELL_SIZE * random.randint(0, GRID_SIZE - 1),
-            random.randint(0, 7) / 4 * math.pi
-        ]
+        tball_pos = (center_x, center_y, angle_by_direction[direction])
         tball_length = CELL_SIZE * random.randint(1, 5)
         tball_speed = random.randint(5, 7) * (2 * random.randint(0, 1) - 1)
         tball_turn = random.randint(1, 2)
@@ -1823,337 +2430,773 @@ def spawn_tball():
         if _try_add_enemy(tball):
             return
 
-def spawn_vball():
-    """보드 바깥에서 진입하며 궤적이 휘는 VBall을 생성합니다."""
+def spawn_vball(
+    row: Optional[int] = None,
+    col: Optional[int] = None,
+    direction: Optional[str] = None
+) -> None:
+    """선택한 레인에서 진입하는 VBall을 생성합니다."""
+    row, col, direction = _resolve_spawn_location(row, col, direction)
+    position, travel = _get_spawn_edge_position(row, col, direction, 3)
+    speed = (travel[0] * 10, travel[1] * 10)
+    target_cell = random.randint(0, GRID_SIZE - 1)
     for _ in range(20):
         vball = VBall()
-        vb_face = random.randint(0, 3)
-        vb_pos = -GRID_EDGE_OFFSET + CELL_SIZE * random.randint(0, GRID_SIZE - 1)
-        # 궤도의 정점은 이동 방향을 따라 선택한 한 칸의 중앙에 놓습니다.
-        vb_target_cell = random.randint(0, GRID_SIZE - 1)
-        if vb_face == 0:
-            position, speed = (
-                (display_size[0] // 2 + vb_pos, display_size[1] // 2 - BOARD_HALF_SIZE - 2 * CELL_SIZE),
-                (0, 10)
-            )
-        elif vb_face == 1:
-            position, speed = (
-                (display_size[0] // 2 + BOARD_HALF_SIZE + 3 * CELL_SIZE, display_size[1] // 2 + vb_pos),
-                (-10, 0)
-            )
-        elif vb_face == 2:
-            position, speed = (
-                (display_size[0] // 2 + vb_pos, display_size[1] // 2 + BOARD_HALF_SIZE + 2 * CELL_SIZE),
-                (0, -10)
-            )
-        else:
-            position, speed = (
-                (display_size[0] // 2 - BOARD_HALF_SIZE - 3 * CELL_SIZE, display_size[1] // 2 + vb_pos),
-                (10, 0)
-            )
-        vball.configure(position, vb_face, vb_target_cell, speed)
+        vball.configure(
+            position,
+            SPAWN_FACE_BY_DIRECTION[direction],
+            target_cell,
+            speed
+        )
         if _try_add_enemy(vball):
             return
 
-def spawn_laser():
-    """보드 바깥에서 안쪽으로 발사되는 레이저를 생성합니다."""
+def spawn_laser(
+    row: Optional[int] = None,
+    col: Optional[int] = None,
+    direction: Optional[str] = None
+) -> None:
+    """선택한 시계 방향 레인에서 안쪽으로 발사되는 레이저를 생성합니다."""
+    row, col, direction = _resolve_spawn_location(row, col, direction)
+    position, _ = _get_spawn_edge_position(row, col, direction, 3)
     for _ in range(20):
         laser = Laser()
-        laser_face = random.randint(0, 3)
-        laser_pos = -GRID_EDGE_OFFSET + CELL_SIZE * random.randint(0, GRID_SIZE - 1)
-        if laser_face == 0:
-            position = (
-                display_size[0] // 2 + laser_pos,
-                display_size[1] // 2 - BOARD_HALF_SIZE - 3 * CELL_SIZE
-            )
-        elif laser_face == 1:
-            position = (
-                display_size[0] // 2 + BOARD_HALF_SIZE + 3 * CELL_SIZE,
-                display_size[1] // 2 + laser_pos
-            )
-        elif laser_face == 2:
-            position = (
-                display_size[0] // 2 + laser_pos,
-                display_size[1] // 2 + BOARD_HALF_SIZE + 3 * CELL_SIZE
-            )
-        else:
-            position = (
-                display_size[0] // 2 - BOARD_HALF_SIZE - 3 * CELL_SIZE,
-                display_size[1] // 2 + laser_pos
-            )
-        laser.configure(position, laser_face)
+        laser.configure(position, SPAWN_FACE_BY_DIRECTION[direction])
         if _try_add_enemy(laser):
             return
 
 
-def spawn_log():
-    """3~7칸 길이의 통나무를 보드 밖에서 무작위 행 또는 열로 굴립니다."""
+def spawn_log(
+    row: Optional[int] = None,
+    col: Optional[int] = None,
+    direction: Optional[str] = None
+) -> None:
+    """선택한 진입 레인의 위치에서 통나무를 생성합니다."""
+    row, col, direction = _resolve_spawn_location(row, col, direction)
     board_left = display_size[0] // 2 - BOARD_HALF_SIZE
     board_right = display_size[0] // 2 + BOARD_HALF_SIZE
     board_top = display_size[1] // 2 - BOARD_HALF_SIZE
     board_bottom = display_size[1] // 2 + BOARD_HALF_SIZE
+    lane_x, lane_y = _get_grid_cell_center(row, col)
     log_radius = Log.thickness // 2
+    if direction == "top":
+        position = (lane_x, board_top - 3 * CELL_SIZE - log_radius)
+    elif direction == "right":
+        position = (board_right + 3 * CELL_SIZE + log_radius, lane_y)
+    elif direction == "bottom":
+        position = (lane_x, board_bottom + 3 * CELL_SIZE + log_radius)
+    else:
+        position = (board_left - 3 * CELL_SIZE - log_radius, lane_y)
+
     for _ in range(20):
         log_length = random.randint(3, GRID_SIZE)
-        first_lane = random.randint(0, GRID_SIZE - log_length)
-        log_face = random.randint(0, 3)
-        lane_start = board_left if log_face in (0, 2) else board_top
-        lane_center = lane_start + (first_lane + log_length / 2) * CELL_SIZE
-
-        if log_face == 0:
-            position = (lane_center, board_top - 3 * CELL_SIZE - log_radius)
-        elif log_face == 1:
-            position = (board_right + 3 * CELL_SIZE + log_radius, lane_center)
-        elif log_face == 2:
-            position = (lane_center, board_bottom + 3 * CELL_SIZE + log_radius)
-        else:
-            position = (board_left - 3 * CELL_SIZE - log_radius, lane_center)
-
         log = Log()
-        log.configure(position, log_face, log_length)
+        log.configure(position, SPAWN_FACE_BY_DIRECTION[direction], log_length)
         if _try_add_enemy(log):
             return
 
 
-def spawn_bomb() -> bool:
-    """메인 폭탄 하나를 생성합니다. 보드 타일이 가득 차면 생성하지 않습니다."""
-    return bomb_manager.spawn()
+def spawn_bomb(
+    row: Optional[int] = None,
+    col: Optional[int] = None,
+    direction: Optional[str] = None
+) -> bool:
+    """지정 또는 무작위의 빈 타일에 메인 폭탄 하나를 생성합니다."""
+    return bomb_manager.spawn(row, col, direction)
 
 
-def spawn_enemies_by_level() -> None:
-    """현재 레벨의 장애물 생성 규칙을 실행합니다.
+class SpawnState:
+    """레벨별 스폰 함수가 공유하는 장애물 타이머 상태입니다."""
 
-    레벨마다 독립된 bomb_delay 조건을 사용하므로 폭탄 출현 간격은 각 레벨
-    블록 안의 대기 범위만 바꾸면 조정할 수 있습니다. delay는 100/tps씩
-    감소하므로 10 * randint(a, b)는 대략 a*0.1~b*0.1초 간격입니다.
-    """
-    global ball_delay, tball_delay, vball_delay, laser_delay, log_delay, bomb_delay
-    if game_level == 1:
-        if ball_delay <= 0:
-            spawn_ball()
-            ball_delay = 10*random.randint(10, 30)
-            for i in range(random.randint(0, 3)): spawn_ball()
-        if tball_delay <= 0:
-            spawn_tball()
-            tball_delay = 10*random.randint(40, 70)
-            for i in range(random.randint(0, 0)): spawn_tball()
-        if vball_delay <= 0:
-            spawn_vball()
-            vball_delay = 10*random.randint(20, 30)
-            for i in range(random.randint(0, 2)): spawn_vball()
-        if laser_delay <= 0 and False:
-            spawn_laser()
-            laser_delay = 10*random.randint(80, 150)
-            if random.randint(1, 20) == 1: spawn_laser()
-        if log_delay <= 0 and False:
-            spawn_log()
-            log_delay = 10*random.randint(10, 20)
-            for i in range(random.randint(0, 0)): spawn_log()
-        if bomb_delay <= 0 and False:
-            spawn_bomb()
-            bomb_delay = 10*random.randint(40, 40)
-    if game_level == 2:
-        if ball_delay <= 0:
-            spawn_ball()
-            ball_delay = 10*random.randint(30, 50)
-            for i in range(random.randint(0, 3)): spawn_ball()
-        if tball_delay <= 0 and False:
-            spawn_tball()
-            tball_delay = 10*random.randint(200, 200)
-        if vball_delay <= 0:
-            spawn_vball()
-            vball_delay = 10*random.randint(20, 20)
-            for i in range(random.randint(2, 2)): spawn_vball()
-        if laser_delay <= 0:
-            spawn_laser()
-            laser_delay = 10*random.randint(100, 150)
-            for i in range(random.randint(0, 2)): spawn_laser()
-            if random.randint(1, 5) == 1: laser_delay = 0
-        if log_delay <= 0 and False:
-            spawn_log()
-            log_delay = 10*random.randint(10, 20)
-            for i in range(random.randint(0, 0)): spawn_log()
-        if bomb_delay <= 0 and False:
-            spawn_bomb()
-            bomb_delay = 10*random.randint(300, 400)
-    if game_level == 3:
-        if ball_delay <= 0:
-            spawn_ball()
-            ball_delay = 10*random.randint(20, 50)
-            for i in range(random.randint(0, 0)): spawn_ball()
-            if random.randint(1, 3) == 1: ball_delay = 0
-        if tball_delay <= 0:
-            spawn_tball()
-            tball_delay = 10*random.randint(50, 80)
-            for i in range(random.randint(1, 2)): spawn_tball()
-        if vball_delay <= 0 and False:
-            spawn_vball()
-            vball_delay = 10*random.randint(100, 200)
-        if laser_delay <= 0:
-            laser_delay = 10*random.randint(20, 20)
-            for i in range(random.randint(4, 5)): spawn_laser()
-        if log_delay <= 0 and False:
-            spawn_log()
-            log_delay = 10*random.randint(10, 20)
-            for i in range(random.randint(0, 0)): spawn_log()
-        if bomb_delay <= 0 and False:
-            spawn_bomb()
-            bomb_delay = 10*random.randint(250, 350)
-    if game_level == 4:
-        if ball_delay <= 0 and False:
-            spawn_ball()
-            ball_delay = 10*random.randint(100, 150)
-            for i in range(random.randint(0, 0)): spawn_ball()
-        if tball_delay <= 0:
-            tball_delay = 10*random.randint(30, 30)
-            for i in range(random.randint(3, 3)): spawn_tball()
-        if vball_delay <= 0 and False:
-            spawn_vball()
-            vball_delay = 10*random.randint(50, 150)
-            for i in range(random.randint(0, 0)): spawn_vball()
-        if laser_delay <= 0 and False:
-            spawn_laser()
-            laser_delay = 10*random.randint(10, 20)
-            for i in range(random.randint(0, 0)): spawn_laser()
-        if log_delay <= 0:
-            spawn_log()
-            log_delay = 10*random.randint(50, 100)
-            for i in range(random.randint(0, 0)): spawn_log()
-            if random.randint(1, 4) == 1: log_delay = 10*10
-        if bomb_delay <= 0 and False:
-            spawn_bomb()
-            bomb_delay = 10*random.randint(220, 300)
-    if game_level == 5:
-        if ball_delay <= 0:
-            ball_delay = 10*random.randint(20, 30)
-            for i in range(random.randint(3, 6)): spawn_ball()
-        if tball_delay <= 0 and False:
-            spawn_tball()
-            tball_delay = 10*random.randint(70, 150)
-            for i in range(random.randint(0, 0)): spawn_tball()
-        if vball_delay <= 0:
-            vball_delay = 10*random.randint(10, 30)
-            for i in range(random.randint(2, 4)): spawn_vball()
-        if laser_delay <= 0:
-            laser_delay = 10*random.randint(30, 60)
-            for i in range(random.randint(2, 2)): spawn_laser()
-            if random.randint(1, 5) == 1: spawn_laser()
-        if log_delay <= 0 and False:
-            spawn_log()
-            log_delay = 10*random.randint(10, 20)
-            for i in range(random.randint(0, 0)): spawn_log()
-        if bomb_delay <= 0 and False:
-            spawn_bomb()
-            bomb_delay = 10*random.randint(180, 250)
-    if game_level == 6:  # 보스맵
-        if ball_delay <= 0:
-            ball_delay = 10*random.randint(10, 10)
-            for i in range(random.randint(0, 1)): spawn_ball()
-            if random.randint(1, 4) == 1: ball_delay = 0
-        if tball_delay <= 0:
-            tball_delay = 10*random.randint(20, 40)
-            for i in range(random.randint(1, 2)): spawn_tball()
-        if vball_delay <= 0:
-            vball_delay = 10*random.randint(10, 30)
-            for i in range(random.randint(2, 3)): spawn_vball()
-        if laser_delay <= 0:
-            laser_delay = 10*random.randint(20, 30)
-            for i in range(random.randint(1, 1)): spawn_laser()
-            if random.randint(1, 2) == 1: laser_delay = 10*10
-        if log_delay <= 0:
-            spawn_log()
-            log_delay = 10*random.randint(30, 60)
-            for i in range(random.randint(0, 0)): spawn_log()
-            if random.randint(1, 2) == 1: log_delay = 10*10
-        if bomb_delay <= 0 and False:
-            spawn_bomb()
-            bomb_delay = 10*random.randint(100, 150)
-    
-    if game_level == 7:
-        if ball_delay <= 0 and False:
-            ball_delay = 10*random.randint(10, 20)
-            for i in range(random.randint(1, 2)): spawn_ball()
-        if tball_delay <= 0:
-            tball_delay = 10*random.randint(50, 80)
-            for i in range(random.randint(3, 4)): spawn_tball()
-        if vball_delay <= 0 and False:
-            vball_delay = 10*random.randint(10, 30)
-            for i in range(random.randint(1, 2)): spawn_vball()
-        if laser_delay <= 0:
-            laser_delay = 10*random.randint(20, 40)
-            for i in range(random.randint(1, 1)): spawn_laser()
-        if log_delay <= 0:
-            log_delay = 10*random.randint(50, 70)
-            for i in range(random.randint(1, 1)): spawn_log()
-            if random.randint(1, 5) == 1: log_delay = 10*20
-        if bomb_delay <= 0:
-            spawn_bomb()
-            bomb_delay = 10*random.randint(30, 50)
-    if game_level == 8:
-        if ball_delay <= 0:
-            ball_delay = 10*random.randint(1, 1)
-            for i in range(random.randint(0, 0)): spawn_ball()
-            if random.randint(1, 3) == 1: spawn_ball()
-        if tball_delay <= 0 and False:
-            tball_delay = 10*random.randint(50, 100)
-            for i in range(random.randint(3, 4)): spawn_tball()
-        if vball_delay <= 0 and False:
-            vball_delay = 10*random.randint(50, 100)
-            for i in range(random.randint(0, 1)): spawn_vball()
-        if laser_delay <= 0 and False:
-            laser_delay = 10*random.randint(1, 1)
-            for i in range(random.randint(0, 0)): spawn_laser()
-            if random.randint(1, 3) == 1: spawn_laser()
-        if log_delay <= 0 and False:
-            log_delay = 10*random.randint(50, 200)
-            for i in range(random.randint(1, 1)): spawn_log()
-        if bomb_delay <= 0 and False:
-            spawn_bomb()
-            bomb_delay = 10*random.randint(160, 220)
-    if game_level == 9:
-        if ball_delay <= 0 and False:
-            ball_delay = 10*random.randint(1, 1)
-            for i in range(random.randint(0, 0)): spawn_ball()
-            if random.randint(1, 3) == 1: spawn_ball()
-        if tball_delay <= 0:
-            tball_delay = 10*random.randint(20, 20)
-            for i in range(random.randint(0, 0)): spawn_tball()
-            if random.randint(1, 3) == 1: spawn_tball()
-        if vball_delay <= 0:
-            vball_delay = 10*random.randint(10, 10)
-            for i in range(random.randint(0, 2)): spawn_vball()
-        if laser_delay <= 0 and False:
-            laser_delay = 10*random.randint(1, 1)
-            for i in range(random.randint(0, 0)): spawn_laser()
-            if random.randint(1, 3) == 1: spawn_laser()
-        if log_delay <= 0:
-            log_delay = 10*random.randint(40, 60)
-            for i in range(random.randint(1, 1)): spawn_log()
-            if random.randint(1, 5) == 1: log_delay = 10*20
-        if bomb_delay <= 0:
-            spawn_bomb()
-            bomb_delay = 10*random.randint(40, 40)
-    if game_level == 10:  # 보스맵
-        if ball_delay <= 0 and False:
-            ball_delay = 10*random.randint(1, 1)
-            for i in range(random.randint(0, 0)): spawn_ball()
-            if random.randint(1, 3) == 1: spawn_ball()
-        if tball_delay <= 0 and False:
-            tball_delay = 10*random.randint(50, 100)
-            for i in range(random.randint(3, 4)): spawn_tball()
-        if vball_delay <= 0 and False:
-            vball_delay = 10*random.randint(50, 100)
-            for i in range(random.randint(2, 3)): spawn_vball()
-        if laser_delay <= 0:
-            laser_delay = 10*random.randint(1, 1)
-            if random.randint(1, 7) == 1: spawn_laser()
-        if log_delay <= 0:
-            log_delay = 10*random.randint(30, 50)
-            for i in range(random.randint(1, 1)): spawn_log()
-            if random.randint(1, 7) == 1: log_delay = 10*1
-        if bomb_delay <= 0:
-            spawn_bomb()
-            bomb_delay = 10*random.randint(20, 40)
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.ball_delay = 0.0
+        self.tball_delay = 0.0
+        self.vball_delay = 0.0
+        self.laser_delay = 0.0
+        self.log_delay = 0.0
+        self.bomb_delay = 0.0
+
+
+SPAWN_DELAY_SCALE = 10
+DEFAULT_LANES = (1, 2, 3, 4, 5, 6, 7)
+DEFAULT_DIRECTIONS = ("top", "right", "bottom", "left")
+
+
+def _spawn_from_lane_pool(
+    spawn_function: Callable[..., Any],
+    lane_pool: Sequence[int] = DEFAULT_LANES,
+    direction_pool: Sequence[str] = DEFAULT_DIRECTIONS
+) -> None:
+    """레인·방향 풀에서 하나를 고르고 좌표 헬퍼를 통해 장애물을 생성합니다."""
+    lane = random.choice(lane_pool)
+    direction = random.choice(direction_pool)
+    row, col = get_spawn_coordinates(direction, lane)
+    spawn_function(row=row, col=col, direction=direction)
+
+
+# 타이머 값은 기존과 같이 100/tps 단위로 감소합니다.
+# 각 함수에서 해당 레벨의 장애물과 확률을 직접 수정할 수 있습니다.
+def spawn_level_1(state: SpawnState, dt: float) -> None:
+    state.ball_delay -= dt
+    if state.ball_delay <= 0:
+        state.ball_delay = random.randint(10, 30) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(1, 4)):
+            _spawn_from_lane_pool(
+                spawn_ball, (1, 1, 2, 3, 4, 5, 6, 7, 7)
+            )
+    state.tball_delay -= dt
+    if state.tball_delay <= 0:
+        state.tball_delay = random.randint(40, 70) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_tball)
+    state.vball_delay -= dt
+    if state.vball_delay <= 0:
+        state.vball_delay = random.randint(20, 30) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(1, 3)):
+            _spawn_from_lane_pool(spawn_vball)
+
+
+def spawn_level_2(state: SpawnState, dt: float) -> None:
+    state.ball_delay -= dt
+    if state.ball_delay <= 0:
+        state.ball_delay = random.randint(30, 50) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(1, 4)):
+            _spawn_from_lane_pool(spawn_ball)
+    state.vball_delay -= dt
+    if state.vball_delay <= 0:
+        state.vball_delay = 20 * SPAWN_DELAY_SCALE
+        for _ in range(3):
+            _spawn_from_lane_pool(spawn_vball)
+    state.laser_delay -= dt
+    if state.laser_delay <= 0:
+        state.laser_delay = random.randint(100, 150) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 5:
+            state.laser_delay = 0
+        for _ in range(random.randint(1, 3)):
+            _spawn_from_lane_pool(spawn_laser)
+
+
+def spawn_level_3(state: SpawnState, dt: float) -> None:
+    state.ball_delay -= dt
+    if state.ball_delay <= 0:
+        state.ball_delay = random.randint(20, 50) * SPAWN_DELAY_SCALE
+        _spawn_from_lane_pool(spawn_ball)
+        if random.random() < 1 / 3:
+            state.ball_delay = 0
+    state.tball_delay -= dt
+    if state.tball_delay <= 0:
+        state.tball_delay = random.randint(50, 80) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(2, 3)):
+            _spawn_from_lane_pool(spawn_tball)
+    state.laser_delay -= dt
+    if state.laser_delay <= 0:
+        state.laser_delay = 20 * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(3, 5)):
+            _spawn_from_lane_pool(spawn_laser)
+
+
+def spawn_level_4(state: SpawnState, dt: float) -> None:
+    state.tball_delay -= dt
+    if state.tball_delay <= 0:
+        state.tball_delay = 30 * SPAWN_DELAY_SCALE
+        for _ in range(3):
+            _spawn_from_lane_pool(spawn_tball)
+    state.log_delay -= dt
+    if state.log_delay <= 0:
+        state.log_delay = random.randint(50, 100) * SPAWN_DELAY_SCALE
+        _spawn_from_lane_pool(spawn_log)
+        if random.random() < 1 / 4:
+            state.log_delay = 100
+
+
+def spawn_level_5(state: SpawnState, dt: float) -> None:
+    state.ball_delay -= dt
+    if state.ball_delay <= 0:
+        state.ball_delay = random.randint(20, 30) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(3, 6)):
+            _spawn_from_lane_pool(spawn_ball)
+    state.vball_delay -= dt
+    if state.vball_delay <= 0:
+        state.vball_delay = random.randint(10, 30) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(2, 4)):
+            _spawn_from_lane_pool(spawn_vball)
+    state.laser_delay -= dt
+    if state.laser_delay <= 0:
+        state.laser_delay = random.randint(30, 60) * SPAWN_DELAY_SCALE
+        for _ in range(2):
+            _spawn_from_lane_pool(spawn_laser)
+        if random.random() < 1 / 5:
+            _spawn_from_lane_pool(spawn_laser)
+
+
+def spawn_level_6(state: SpawnState, dt: float) -> None:
+    state.ball_delay -= dt
+    if state.ball_delay <= 0:
+        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(1, 2)):
+            _spawn_from_lane_pool(spawn_ball)
+    state.tball_delay -= dt
+    if state.tball_delay <= 0:
+        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_tball)
+    state.vball_delay -= dt
+    if state.vball_delay <= 0:
+        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_vball)
+    state.laser_delay -= dt
+    if state.laser_delay <= 0:
+        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_laser)
+    state.log_delay -= dt
+    if state.log_delay <= 0:
+        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_log)
+
+
+def spawn_level_7(state: SpawnState, dt: float) -> None:
+    state.ball_delay -= dt
+    if state.ball_delay <= 0:
+        state.ball_delay = 100
+        for _ in range(random.randint(0, 1)):
+            _spawn_from_lane_pool(spawn_ball, direction_pool=("top", "bottom"))
+        if random.random() < 1 / 4:
+            state.ball_delay = 0
+    state.tball_delay -= dt
+    if state.tball_delay <= 0:
+        state.tball_delay = random.randint(20, 40) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(1, 2)):
+            _spawn_from_lane_pool(spawn_tball)
+    state.vball_delay -= dt
+    if state.vball_delay <= 0:
+        state.vball_delay = random.randint(10, 30) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(2, 3)):
+            _spawn_from_lane_pool(spawn_vball)
+    state.laser_delay -= dt
+    if state.laser_delay <= 0:
+        state.laser_delay = random.randint(20, 30) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            state.laser_delay = 100
+        _spawn_from_lane_pool(spawn_laser)
+    state.log_delay -= dt
+    if state.log_delay <= 0:
+        state.log_delay = random.randint(30, 60) * SPAWN_DELAY_SCALE
+        _spawn_from_lane_pool(spawn_log)
+        if random.random() < 1 / 2:
+            state.log_delay = 100
+
+
+def spawn_level_8(state: SpawnState, dt: float) -> None:
+    state.tball_delay -= dt
+    if state.tball_delay <= 0:
+        state.tball_delay = random.randint(50, 80) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(3, 4)):
+            _spawn_from_lane_pool(spawn_tball)
+    state.laser_delay -= dt
+    if state.laser_delay <= 0:
+        state.laser_delay = random.randint(20, 40) * SPAWN_DELAY_SCALE
+        _spawn_from_lane_pool(spawn_laser)
+    state.log_delay -= dt
+    if state.log_delay <= 0:
+        state.log_delay = random.randint(50, 70) * SPAWN_DELAY_SCALE
+        _spawn_from_lane_pool(spawn_log)
+        if random.random() < 1 / 5:
+            state.log_delay = 200
+    state.bomb_delay -= dt
+    if state.bomb_delay <= 0:
+        state.bomb_delay = random.randint(30, 50) * SPAWN_DELAY_SCALE
+        _spawn_from_lane_pool(spawn_bomb)
+
+
+def spawn_level_9(state: SpawnState, dt: float) -> None:
+    state.ball_delay -= dt
+    if state.ball_delay <= 0:
+        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(1, 2)):
+            _spawn_from_lane_pool(spawn_ball)
+    state.tball_delay -= dt
+    if state.tball_delay <= 0:
+        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_tball)
+    state.vball_delay -= dt
+    if state.vball_delay <= 0:
+        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_vball)
+    state.laser_delay -= dt
+    if state.laser_delay <= 0:
+        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_laser)
+    state.log_delay -= dt
+    if state.log_delay <= 0:
+        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_log)
+    state.bomb_delay -= dt
+    if state.bomb_delay <= 0:
+        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_bomb)
+
+
+def spawn_level_10(state: SpawnState, dt: float) -> None:
+    state.ball_delay -= dt
+    if state.ball_delay <= 0:
+        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(1, 2)):
+            _spawn_from_lane_pool(spawn_ball)
+    state.tball_delay -= dt
+    if state.tball_delay <= 0:
+        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_tball)
+    state.vball_delay -= dt
+    if state.vball_delay <= 0:
+        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_vball)
+    state.laser_delay -= dt
+    if state.laser_delay <= 0:
+        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_laser)
+    state.log_delay -= dt
+    if state.log_delay <= 0:
+        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_log)
+    state.bomb_delay -= dt
+    if state.bomb_delay <= 0:
+        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_bomb)
+
+
+def spawn_level_11(state: SpawnState, dt: float) -> None:
+    state.tball_delay -= dt
+    if state.tball_delay <= 0:
+        state.tball_delay = 20 * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_tball)
+    state.vball_delay -= dt
+    if state.vball_delay <= 0:
+        state.vball_delay = 10 * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(0, 2)):
+            _spawn_from_lane_pool(spawn_vball)
+    state.log_delay -= dt
+    if state.log_delay <= 0:
+        state.log_delay = random.randint(40, 60) * SPAWN_DELAY_SCALE
+        _spawn_from_lane_pool(spawn_log)
+        if random.random() < 1 / 5:
+            state.log_delay = 200
+    state.bomb_delay -= dt
+    if state.bomb_delay <= 0:
+        state.bomb_delay = 40 * SPAWN_DELAY_SCALE
+        _spawn_from_lane_pool(spawn_bomb)
+
+
+def spawn_level_12(state: SpawnState, dt: float) -> None:
+    state.laser_delay -= dt
+    if state.laser_delay <= 0:
+        state.laser_delay = SPAWN_DELAY_SCALE
+        if random.random() < 1 / 7:
+            _spawn_from_lane_pool(
+                spawn_laser, direction_pool=("left", "right")
+            )
+    state.log_delay -= dt
+    if state.log_delay <= 0:
+        state.log_delay = random.randint(30, 50) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 7:
+            state.log_delay = SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_log)
+    state.bomb_delay -= dt
+    if state.bomb_delay <= 0:
+        state.bomb_delay = SPAWN_DELAY_SCALE
+        if random.random() < 1 / 7:
+            _spawn_from_lane_pool(spawn_bomb)
+
+
+def spawn_level_13(state: SpawnState, dt: float) -> None:
+    state.ball_delay -= dt
+    if state.ball_delay <= 0:
+        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(1, 2)):
+            _spawn_from_lane_pool(spawn_ball)
+    state.tball_delay -= dt
+    if state.tball_delay <= 0:
+        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_tball)
+    state.vball_delay -= dt
+    if state.vball_delay <= 0:
+        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_vball)
+    state.laser_delay -= dt
+    if state.laser_delay <= 0:
+        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_laser)
+    state.log_delay -= dt
+    if state.log_delay <= 0:
+        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_log)
+    state.bomb_delay -= dt
+    if state.bomb_delay <= 0:
+        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_bomb)
+
+
+def spawn_level_14(state: SpawnState, dt: float) -> None:
+    state.ball_delay -= dt
+    if state.ball_delay <= 0:
+        state.ball_delay = SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_ball)
+
+
+def spawn_level_15(state: SpawnState, dt: float) -> None:
+    state.ball_delay -= dt
+    if state.ball_delay <= 0:
+        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(1, 2)):
+            _spawn_from_lane_pool(spawn_ball)
+    state.tball_delay -= dt
+    if state.tball_delay <= 0:
+        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_tball)
+    state.vball_delay -= dt
+    if state.vball_delay <= 0:
+        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_vball)
+    state.laser_delay -= dt
+    if state.laser_delay <= 0:
+        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_laser)
+    state.log_delay -= dt
+    if state.log_delay <= 0:
+        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_log)
+    state.bomb_delay -= dt
+    if state.bomb_delay <= 0:
+        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_bomb)
+
+
+def spawn_level_16(state: SpawnState, dt: float) -> None:
+    state.ball_delay -= dt
+    if state.ball_delay <= 0:
+        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(1, 2)):
+            _spawn_from_lane_pool(spawn_ball)
+    state.tball_delay -= dt
+    if state.tball_delay <= 0:
+        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_tball)
+    state.vball_delay -= dt
+    if state.vball_delay <= 0:
+        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_vball)
+    state.laser_delay -= dt
+    if state.laser_delay <= 0:
+        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_laser)
+    state.log_delay -= dt
+    if state.log_delay <= 0:
+        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_log)
+    state.bomb_delay -= dt
+    if state.bomb_delay <= 0:
+        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_bomb)
+
+
+def spawn_level_17(state: SpawnState, dt: float) -> None:
+    state.ball_delay -= dt
+    if state.ball_delay <= 0:
+        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(1, 2)):
+            _spawn_from_lane_pool(spawn_ball)
+    state.tball_delay -= dt
+    if state.tball_delay <= 0:
+        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_tball)
+    state.vball_delay -= dt
+    if state.vball_delay <= 0:
+        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_vball)
+    state.laser_delay -= dt
+    if state.laser_delay <= 0:
+        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_laser)
+    state.log_delay -= dt
+    if state.log_delay <= 0:
+        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_log)
+    state.bomb_delay -= dt
+    if state.bomb_delay <= 0:
+        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_bomb)
+
+
+def spawn_level_18(state: SpawnState, dt: float) -> None:
+    state.ball_delay -= dt
+    if state.ball_delay <= 0:
+        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(1, 2)):
+            _spawn_from_lane_pool(spawn_ball)
+    state.tball_delay -= dt
+    if state.tball_delay <= 0:
+        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_tball)
+    state.vball_delay -= dt
+    if state.vball_delay <= 0:
+        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_vball)
+    state.laser_delay -= dt
+    if state.laser_delay <= 0:
+        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_laser)
+    state.log_delay -= dt
+    if state.log_delay <= 0:
+        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_log)
+    state.bomb_delay -= dt
+    if state.bomb_delay <= 0:
+        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_bomb)
+
+
+def spawn_level_19(state: SpawnState, dt: float) -> None:
+    state.ball_delay -= dt
+    if state.ball_delay <= 0:
+        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(1, 2)):
+            _spawn_from_lane_pool(spawn_ball)
+    state.tball_delay -= dt
+    if state.tball_delay <= 0:
+        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_tball)
+    state.vball_delay -= dt
+    if state.vball_delay <= 0:
+        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_vball)
+    state.laser_delay -= dt
+    if state.laser_delay <= 0:
+        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_laser)
+    state.log_delay -= dt
+    if state.log_delay <= 0:
+        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_log)
+    state.bomb_delay -= dt
+    if state.bomb_delay <= 0:
+        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_bomb)
+
+
+def spawn_level_20(state: SpawnState, dt: float) -> None:
+    state.ball_delay -= dt
+    if state.ball_delay <= 0:
+        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(1, 2)):
+            _spawn_from_lane_pool(spawn_ball)
+    state.tball_delay -= dt
+    if state.tball_delay <= 0:
+        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_tball)
+    state.vball_delay -= dt
+    if state.vball_delay <= 0:
+        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_vball)
+    state.laser_delay -= dt
+    if state.laser_delay <= 0:
+        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_laser)
+    state.log_delay -= dt
+    if state.log_delay <= 0:
+        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_log)
+    state.bomb_delay -= dt
+    if state.bomb_delay <= 0:
+        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_bomb)
+
+
+def spawn_level_21(state: SpawnState, dt: float) -> None:
+    state.ball_delay -= dt
+    if state.ball_delay <= 0:
+        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(1, 2)):
+            _spawn_from_lane_pool(spawn_ball)
+    state.tball_delay -= dt
+    if state.tball_delay <= 0:
+        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_tball)
+    state.vball_delay -= dt
+    if state.vball_delay <= 0:
+        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_vball)
+    state.laser_delay -= dt
+    if state.laser_delay <= 0:
+        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_laser)
+    state.log_delay -= dt
+    if state.log_delay <= 0:
+        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_log)
+    state.bomb_delay -= dt
+    if state.bomb_delay <= 0:
+        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_bomb)
+
+
+def spawn_level_22(state: SpawnState, dt: float) -> None:
+    state.ball_delay -= dt
+    if state.ball_delay <= 0:
+        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(1, 2)):
+            _spawn_from_lane_pool(spawn_ball)
+    state.tball_delay -= dt
+    if state.tball_delay <= 0:
+        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_tball)
+    state.vball_delay -= dt
+    if state.vball_delay <= 0:
+        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_vball)
+    state.laser_delay -= dt
+    if state.laser_delay <= 0:
+        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_laser)
+    state.log_delay -= dt
+    if state.log_delay <= 0:
+        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_log)
+    state.bomb_delay -= dt
+    if state.bomb_delay <= 0:
+        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_bomb)
+
+
+def spawn_level_23(state: SpawnState, dt: float) -> None:
+    state.ball_delay -= dt
+    if state.ball_delay <= 0:
+        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(1, 2)):
+            _spawn_from_lane_pool(spawn_ball)
+    state.tball_delay -= dt
+    if state.tball_delay <= 0:
+        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_tball)
+    state.vball_delay -= dt
+    if state.vball_delay <= 0:
+        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_vball)
+    state.laser_delay -= dt
+    if state.laser_delay <= 0:
+        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            _spawn_from_lane_pool(spawn_laser)
+    state.log_delay -= dt
+    if state.log_delay <= 0:
+        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_log)
+    state.bomb_delay -= dt
+    if state.bomb_delay <= 0:
+        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 3:
+            _spawn_from_lane_pool(spawn_bomb)
+
+
+SPAWN_FUNCTIONS_BY_LEVEL: Tuple[
+    Callable[[SpawnState, float], None], ...
+] = (
+    spawn_level_1,
+    spawn_level_2,
+    spawn_level_3,
+    spawn_level_4,
+    spawn_level_5,
+    spawn_level_6,
+    spawn_level_7,
+    spawn_level_8,
+    spawn_level_9,
+    spawn_level_10,
+    spawn_level_11,
+    spawn_level_12,
+    spawn_level_13,
+    spawn_level_14,
+    spawn_level_15,
+    spawn_level_16,
+    spawn_level_17,
+    spawn_level_18,
+    spawn_level_19,
+    spawn_level_20,
+    spawn_level_21,
+    spawn_level_22,
+    spawn_level_23
+)
+
+
+def spawn_enemies_by_level(state: SpawnState, dt: float) -> None:
+    """현재 스테이지의 개별 스폰 함수를 호출합니다."""
+    if 1 <= game_level <= len(SPAWN_FUNCTIONS_BY_LEVEL):
+        SPAWN_FUNCTIONS_BY_LEVEL[game_level - 1](state, dt)
+
 
 def is_collision(
     pos1: Tuple[Tuple[int, int], Tuple[int, int]],
@@ -2183,6 +3226,27 @@ BLUE = (10, 10, 255)
 PURPLE = (128, 0, 255)
 PINK = (255, 0, 255)
 BROWN = (70, 40, 20)
+FLESH = (255, 190, 150)
+
+PLAYER_COLOR_MAP = {
+    "red": RED,
+    "orange": ORANGE,
+    "yellow": YELLOW,
+    "lime": LIME,
+    "green": GREEN,
+    "sky": SKY,
+    "blue": BLUE,
+    "purple": PURPLE,
+    "pink": PINK,
+    "brown": BROWN,
+    "flesh": FLESH
+}
+PLAYER_COLOR_OPTIONS = tuple(PLAYER_COLOR_MAP)
+HIT_EFFECT_OPTIONS = ("None", "Particles", "Explosion")
+PLAYER_CUSTOMIZATION = {
+    "color": "lime",
+    "hit_effect": "Explosion"
+}
 
 
 
@@ -2429,8 +3493,10 @@ def save_game_data() -> None:
     data = {
         "version": GAME_DATA_VERSION,
         "game_level": game_level,
+        "track_ids": TRACK_IDS,
         "score_record": score_record,
-        "level_stats": level_stats
+        "level_stats": level_stats,
+        "player_customization": PLAYER_CUSTOMIZATION
     }
     temp_path = f"{SAVE_FILE_PATH}.tmp"
     try:
@@ -2464,13 +3530,46 @@ def load_game_data() -> None:
         print("게임 저장 파일 형식이 올바르지 않습니다. 새 기록으로 시작합니다.")
         return
 
+    customization = data.get("player_customization")
+    if isinstance(customization, dict):
+        color_name = customization.get("color")
+        hit_effect = customization.get("hit_effect")
+        if isinstance(color_name, str) and color_name in PLAYER_COLOR_MAP:
+            PLAYER_CUSTOMIZATION["color"] = color_name
+        if isinstance(hit_effect, str) and hit_effect in HIT_EFFECT_OPTIONS:
+            PLAYER_CUSTOMIZATION["hit_effect"] = hit_effect
+
+    loaded_track_ids = data.get("track_ids")
+    if loaded_track_ids is None:
+        source_track_ids = LEGACY_TRACK_IDS
+    elif (
+        isinstance(loaded_track_ids, list)
+        and all(isinstance(track_id, str) for track_id in loaded_track_ids)
+    ):
+        source_track_ids = tuple(loaded_track_ids)
+    else:
+        print("저장된 곡 목록 형식이 올바르지 않아 기록을 불러오지 않습니다.")
+        return
+    current_track_indices = {
+        track_id: index for index, track_id in enumerate(TRACK_IDS)
+    }
+
     loaded_level = data.get("game_level", 1)
     if isinstance(loaded_level, int) and not isinstance(loaded_level, bool):
-        game_level = max(1, min(MAX_LEVEL, loaded_level))
+        source_level_index = loaded_level - 1
+        if 0 <= source_level_index < len(source_track_ids):
+            track_id = source_track_ids[source_level_index]
+            if track_id in current_track_indices:
+                game_level = current_track_indices[track_id] + 1
+            else:
+                print(f"저장된 현재 스테이지 곡을 찾을 수 없습니다: {track_id}")
 
     loaded_records = data.get("score_record", [])
     if isinstance(loaded_records, list):
-        for index, record in enumerate(loaded_records[:MAX_LEVEL]):
+        for source_index, record in enumerate(loaded_records[:len(source_track_ids)]):
+            if source_track_ids[source_index] not in current_track_indices:
+                continue
+            index = current_track_indices[source_track_ids[source_index]]
             if isinstance(record, int) and not isinstance(record, bool):
                 score_record[index] = max(0, min(100, record))
             elif isinstance(record, float) and math.isfinite(record):
@@ -2478,7 +3577,10 @@ def load_game_data() -> None:
 
     loaded_stats = data.get("level_stats", [])
     if isinstance(loaded_stats, list):
-        for index, stats in enumerate(loaded_stats[:MAX_LEVEL]):
+        for source_index, stats in enumerate(loaded_stats[:len(source_track_ids)]):
+            if source_track_ids[source_index] not in current_track_indices:
+                continue
+            index = current_track_indices[source_track_ids[source_index]]
             if not isinstance(stats, dict):
                 continue
             clear_count = stats.get("clear_count", 0)
@@ -2553,7 +3655,7 @@ tps = 60
 player = None
 enemies = []
 bomb_manager = BombManager()
-bomb_delay = 0.0
+spawn_state = SpawnState()
 pause = False
 hit_count = [0, 0, 0, 0, 0]
 hit_stack = False
@@ -2572,11 +3674,13 @@ while should_restart:
         preview_track_duration_seconds = get_track_duration_seconds(preview_level)
         enemies = []
         bomb_manager.reset_for_level()
-        bomb_delay = 0.0
-        ball_delay = tball_delay = vball_delay = laser_delay = log_delay = 0
+        spawn_state.reset()
         hit_count = [0, 0, 0, 0, 0]
         hit_stack = False
         preview_spectrum = [0.0] * SPECTRUM_BAND_COUNT
+        preview_spectrum_peaks = [
+            SPECTRUM_AGC_INITIAL_PEAK
+        ] * SPECTRUM_BAND_COUNT
         preview_onset = 0.0
         locked_preview_balls = []
         locked_preview_timer = 0.0
@@ -2586,6 +3690,11 @@ while should_restart:
         transition_switched = True
         menu_running = True
         start_game = False
+        customization_active = False
+        customization_move_mode = False
+        customization_item = 0
+        customization_transition = 1.0
+        customization_test_ball = None
         pygame.mixer.music.set_endevent()
         pygame.mixer.music.stop()
         preview_was_locked = is_level_locked(preview_level)
@@ -2600,8 +3709,80 @@ while should_restart:
                     menu_running = False
                     should_restart = False
                 elif event.type == pygame.KEYDOWN:
+                    if customization_active:
+                        if event.key == pygame.K_p:
+                            customization_active = False
+                            customization_move_mode = False
+                            player = None
+                            enemies.clear()
+                            preview_was_locked = is_level_locked(preview_level)
+                            if not preview_was_locked:
+                                pygame.mixer.music.load(MUSIC_TRACKS[preview_level])
+                                pygame.mixer.music.play(fade_ms=120)
+                        elif event.key == pygame.K_ESCAPE:
+                            customization_move_mode = not customization_move_mode
+                            customization_transition = 0.0
+                        elif customization_move_mode and event.key in (
+                            pygame.K_UP,
+                            pygame.K_DOWN,
+                            pygame.K_LEFT,
+                            pygame.K_RIGHT
+                        ):
+                            player_move(player, pygame.key.get_pressed())
+                        elif not customization_move_mode and event.key in (
+                            pygame.K_UP,
+                            pygame.K_DOWN
+                        ):
+                            customization_item = 1 - customization_item
+                        elif not customization_move_mode and event.key in (
+                            pygame.K_LEFT,
+                            pygame.K_RIGHT
+                        ):
+                            step = -1 if event.key == pygame.K_LEFT else 1
+                            if customization_item == 0:
+                                options = PLAYER_COLOR_OPTIONS
+                                current = options.index(PLAYER_CUSTOMIZATION["color"])
+                                PLAYER_CUSTOMIZATION["color"] = options[
+                                    (current + step) % len(options)
+                                ]
+                                player.color = PLAYER_COLOR_MAP[
+                                    PLAYER_CUSTOMIZATION["color"]
+                                ]
+                            else:
+                                options = HIT_EFFECT_OPTIONS
+                                current = options.index(
+                                    PLAYER_CUSTOMIZATION["hit_effect"]
+                                )
+                                PLAYER_CUSTOMIZATION["hit_effect"] = options[
+                                    (current + step) % len(options)
+                                ]
+                            save_dirty = True
+                            save_game_data()
+                    elif event.key == pygame.K_p:
+                        customization_active = True
+                        customization_move_mode = False
+                        customization_item = 0
+                        customization_transition = 1.0
+                        pygame.mixer.music.stop()
+                        enemies.clear()
+                        bomb_manager.reset_for_level()
+                        player = Player(training_mode=True)
+                        test_center = (
+                            display_size[0] // 2,
+                            display_size[1] // 2
+                        )
+                        customization_test_ball = TBall()
+                        customization_test_ball.configure(
+                            (test_center[0], test_center[1], 0),
+                            CELL_SIZE,
+                            speed=2,
+                            turn=1,
+                            loop=True
+                        )
+                        customization_test_ball.stage = 1
+                        enemies.append(customization_test_ball)
                     # 테스트 시 F6으로 선택된 보스의 잠금 상태를 임시 전환합니다.
-                    if event.key == pygame.K_F6:
+                    elif event.key == pygame.K_F6:
                         debug_level_index = (
                             selected_level
                             if selected_level in BOSS_LEVEL_INDICES
@@ -2640,6 +3821,28 @@ while should_restart:
             if not should_restart:
                 break
 
+            if customization_active:
+                customization_target = (
+                    1.0 if customization_move_mode else 0.0
+                )
+                customization_transition += (
+                    customization_target - customization_transition
+                ) * (1.0 - math.exp(-12.0 * delta_time))
+                if customization_move_mode:
+                    player_move(player, pygame.key.get_pressed())
+                player.update(delta_time)
+                dis.fill(DARK_GRAY)
+                draw_board()
+                update_enemies()
+                player.draw()
+                draw_customization_screen(
+                    customization_item,
+                    customization_move_mode,
+                    customization_transition
+                )
+                pygame.display.update()
+                continue
+
             if transition_elapsed < transition_duration:
                 transition_elapsed = min(
                     transition_duration,
@@ -2659,9 +3862,11 @@ while should_restart:
                     locked_preview_timer = 0.0
                     locked_preview_index = 0
                     bomb_manager.reset_for_level()
-                    bomb_delay = 0.0
-                    ball_delay = tball_delay = vball_delay = laser_delay = log_delay = 0
+                    spawn_state.reset()
                     preview_spectrum = [0.0] * SPECTRUM_BAND_COUNT
+                    preview_spectrum_peaks = [
+                        SPECTRUM_AGC_INITIAL_PEAK
+                    ] * SPECTRUM_BAND_COUNT
                     preview_onset = 0.0
                     transition_switched = True
 
@@ -2673,7 +3878,6 @@ while should_restart:
                 locked_preview_timer = 0.0
                 locked_preview_index = 0
                 bomb_manager.reset_for_level()
-                bomb_delay = 0.0
                 if not preview_locked:
                     pygame.mixer.music.load(MUSIC_TRACKS[preview_level])
                     pygame.mixer.music.play(fade_ms=120)
@@ -2692,25 +3896,20 @@ while should_restart:
                     preview_music_ms,
                     preview_level + 1
                 )
-            attack_blend = 1.0 - math.exp(-SPECTRUM_ATTACK_SPEED * delta_time)
-            release_blend = 1.0 - math.exp(-SPECTRUM_RELEASE_SPEED * delta_time)
-            for band, target in enumerate(preview_targets):
-                blend = attack_blend if target > preview_spectrum[band] else release_blend
-                preview_spectrum[band] += (target - preview_spectrum[band]) * blend
+            update_spectrum_levels(
+                preview_targets,
+                preview_spectrum,
+                preview_spectrum_peaks,
+                delta_time
+            )
             preview_onset += (
                 preview_onset_target / 255.0 - preview_onset
             ) * (1.0 - math.exp(-18.0 * delta_time))
 
             if not preview_locked:
-                # 각 delay 카운터는 초 단위가 아닌 프레임 보정값(100/tps)으로 줄어듭니다.
+                # 스폰 함수의 dt는 기존 타이머 단위에 맞춘 프레임 보정값입니다.
                 delay_step = 100.0 / tps
-                ball_delay -= delay_step
-                tball_delay -= delay_step
-                vball_delay -= delay_step
-                laser_delay -= delay_step
-                log_delay -= delay_step
-                bomb_delay -= delay_step
-                spawn_enemies_by_level()
+                spawn_enemies_by_level(spawn_state, delay_step)
 
             dis.fill(DARK_GRAY)
             draw_main_rhythm_polygon(
@@ -2754,12 +3953,7 @@ while should_restart:
 
     enemies = [Ball(), TBall(), VBall(), Laser()]
     bomb_manager.reset_for_level()
-    bomb_delay = 0
-    ball_delay = 0
-    tball_delay = 0
-    vball_delay = 0
-    laser_delay = 0
-    log_delay = 0
+    spawn_state.reset()
 
     hit_count = [0, 0, 0, 0, 0]
     hit_stack = False
@@ -2799,6 +3993,9 @@ while should_restart:
     pygame.mixer.music.play()
     pygame.mixer.music.set_endevent(music_endevent)
     spectrum_levels = [0.0] * SPECTRUM_BAND_COUNT
+    spectrum_peak_levels = [
+        SPECTRUM_AGC_INITIAL_PEAK
+    ] * SPECTRUM_BAND_COUNT
     onset_envelope = 0.0
     esc_hold_seconds = 0.0
     esc_pressed_while_paused = False
@@ -3078,11 +4275,12 @@ while should_restart:
                 game_level
             )
             delta_time = min(clock.get_time() / 1000.0, 0.05)
-            attack_blend = 1.0 - math.exp(-SPECTRUM_ATTACK_SPEED * delta_time)
-            release_blend = 1.0 - math.exp(-SPECTRUM_RELEASE_SPEED * delta_time)
-            for band, target in enumerate(target_spectrum):
-                blend = attack_blend if target > spectrum_levels[band] else release_blend
-                spectrum_levels[band] += (target - spectrum_levels[band]) * blend
+            update_spectrum_levels(
+                target_spectrum,
+                spectrum_levels,
+                spectrum_peak_levels,
+                delta_time
+            )
             onset_blend = 1.0 - math.exp(-18.0 * delta_time)
             onset_envelope += (onset_strength / 255.0 - onset_envelope) * onset_blend
 
@@ -3166,18 +4364,12 @@ while should_restart:
                 )
 
             # 플레이어를 이동시키고 화면에 그립니다.
-            player.update()
+            player.update(frame_delta_time)
             player.draw()
 
             # 생성 대기 시간을 줄이고 적을 생성한 뒤 움직입니다.
             # 스폰 타이머는 설정한 delay 값을 100/tps만큼 매 프레임 감소시킵니다.
-            ball_delay -= 1/tps*100
-            tball_delay -= 1/tps*100
-            vball_delay -= 1/tps*100
-            laser_delay -= 1/tps*100
-            log_delay -= 1/tps*100
-            bomb_delay -= 1/tps*100
-            spawn_enemies_by_level()
+            spawn_enemies_by_level(spawn_state, 100.0 / tps)
             update_enemies()
             bomb_manager.update(delta_time, player)
 

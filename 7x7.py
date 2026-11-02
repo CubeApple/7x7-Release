@@ -139,7 +139,7 @@ LEVEL_CREATORS = (
     "a_hisa",
     "a_hisa",
     "a_hisa",
-    "기타/기본",
+    "a_hisa",
     "a_hisa",
     "Di Young",
     "joyful",
@@ -1156,7 +1156,7 @@ def set_alpha(
 def update_enemies():
     global enemies, hit_count, hit_stack
     if enemies:
-        alive_count = 0
+        alive_enemies = []
         for enemy in enemies:
             hit_index = ENEMY_HIT_INDEX.get(type(enemy))
             if hit_index is not None:
@@ -1165,11 +1165,20 @@ def update_enemies():
                     if player is not None and player.hp_minus and not hit_stack:
                         hit_count[hit_index] += 1
                         hit_stack = True
-                enemy.draw()
             if not enemy.is_deleted():
-                enemies[alive_count] = enemy
-                alive_count += 1
-        del enemies[alive_count:]
+                alive_enemies.append(enemy)
+        enemies[:] = alive_enemies
+
+        # 모든 궤도선을 먼저 그려 TBall 본체 뒤에 배치합니다.
+        for enemy in enemies:
+            if isinstance(enemy, TBall):
+                enemy.draw_orbit()
+        for enemy in enemies:
+            if type(enemy) in ENEMY_HIT_INDEX and not isinstance(enemy, TBall):
+                enemy.draw()
+        for enemy in enemies:
+            if isinstance(enemy, TBall):
+                enemy.draw_body()
 
 
 
@@ -1694,7 +1703,13 @@ class TBall(object):
     def draw(
         self
         ):
+        self.draw_orbit()
+        self.draw_body()
+
+    def draw_orbit(self) -> None:
         dis.blit(self.line_dis, self.line_dis.get_rect(center=self.position[0:2]))
+
+    def draw_body(self) -> None:
         if self.stage == 0:
             self.dis.fill(pygame.SRCALPHA)
             warning_size = round(66 * ELEMENT_SCALE)
@@ -2330,13 +2345,12 @@ class BombManager:
         self,
         row: Optional[int] = None,
         column: Optional[int] = None,
-        direction: Optional[str] = None
+        chain_count: Optional[int] = None,
+        pattern: Optional[str] = None
     ) -> bool:
-        """폭탄이 없는 지정 또는 무작위 보드 칸에 메인 폭탄을 생성합니다."""
+        """빈 보드 칸에 연쇄 범위와 십자/대각선 패턴을 지정해 폭탄을 생성합니다."""
         if (row is None) != (column is None):
             raise ValueError("폭탄 스폰 좌표는 행과 열을 함께 지정해야 합니다.")
-        if direction is not None and direction not in SPAWN_DIRECTIONS:
-            raise ValueError(f"지원하지 않는 스폰 방향입니다: {direction}")
         if row is not None and column is not None:
             if (
                 not isinstance(row, int)
@@ -2346,6 +2360,18 @@ class BombManager:
                 or not (0 <= row < GRID_SIZE and 0 <= column < GRID_SIZE)
             ):
                 raise ValueError("폭탄 스폰 좌표가 보드 범위를 벗어났습니다.")
+        if chain_count is None:
+            chain_count = random.randint(0, 3)
+        if (
+            not isinstance(chain_count, int)
+            or isinstance(chain_count, bool)
+            or not 0 <= chain_count <= 3
+        ):
+            raise ValueError("폭탄 연쇄 수는 0부터 3 사이의 정수여야 합니다.")
+        if pattern is None:
+            pattern = random.choice(("+", "x"))
+        if pattern not in ("+", "x"):
+            raise ValueError("폭탄 패턴은 '+' 또는 'x'여야 합니다.")
 
         occupied_cells = {
             cell
@@ -2371,8 +2397,8 @@ class BombManager:
         bomb.configure(
             row,
             column,
-            random.randint(0, 3),
-            bool(random.getrandbits(1))
+            chain_count,
+            pattern == "x"
         )
         self.bombs.append(bomb)
         return True
@@ -2401,6 +2427,16 @@ class BombManager:
 
 SPAWN_DIRECTIONS = ("top", "right", "bottom", "left")
 SPAWN_FACE_BY_DIRECTION = dict(zip(SPAWN_DIRECTIONS, range(4)))
+DEFAULT_LANES = tuple(range(1, GRID_SIZE + 1))
+DEFAULT_DIRECTIONS = SPAWN_DIRECTIONS
+DEFAULT_COORDINATES = tuple(range(GRID_SIZE))
+DEFAULT_TBALL_LENGTHS = (1, 2, 3, 4, 5)
+DEFAULT_TBALL_TURNS = (1, 2)
+DEFAULT_TBALL_ROTATION_DIRECTIONS = ("+", "-")
+DEFAULT_VBALL_DISTANCES = tuple(range(1, GRID_SIZE + 1))
+DEFAULT_LOG_LENGTHS = (3, 5, 7)
+DEFAULT_BOMB_CHAIN_COUNTS = (0, 1, 2, 3)
+DEFAULT_BOMB_PATTERNS = ("+", "x")
 
 
 def get_spawn_coordinates(direction: str, lane: int) -> Tuple[int, int]:
@@ -2444,33 +2480,6 @@ def _get_grid_cell_center(row: int, column: int) -> Tuple[int, int]:
     )
 
 
-def _resolve_spawn_location(
-    row: Optional[int],
-    column: Optional[int],
-    direction: Optional[str]
-) -> Tuple[int, int, str]:
-    """좌표와 방향이 없으면 무작위 진입 레인을 정하고 입력을 검증합니다."""
-    if (row is None) != (column is None):
-        raise ValueError("스폰 좌표는 행과 열을 함께 지정해야 합니다.")
-    if row is None or column is None:
-        if direction is None:
-            direction = random.choice(SPAWN_DIRECTIONS)
-        row, column = get_spawn_coordinates(
-            direction,
-            random.randint(1, GRID_SIZE)
-        )
-    if direction is None:
-        direction = random.choice(SPAWN_DIRECTIONS)
-    if direction not in SPAWN_DIRECTIONS:
-        raise ValueError(
-            f"스폰 방향은 {', '.join(SPAWN_DIRECTIONS)} 중 하나여야 합니다."
-        )
-    if row is None or column is None:
-        raise ValueError("스폰 좌표를 계산할 수 없습니다.")
-    _get_grid_cell_center(row, column)
-    return row, column, direction
-
-
 def _get_spawn_edge_position(
     row: int,
     column: int,
@@ -2492,13 +2501,43 @@ def _get_spawn_edge_position(
     return (board_left - outside_cells * CELL_SIZE, lane_y), (1, 0)
 
 
+def _choose_spawn_value(pool: tuple, name: str) -> Any:
+    """필수 튜플 풀에서 가중치를 보존해 하나를 고릅니다."""
+    if not isinstance(pool, tuple) or not pool:
+        raise ValueError(f"{name}은(는) 하나 이상의 값을 가진 튜플이어야 합니다.")
+    return random.choice(pool)
+
+
+def _choose_spawn_lane(lane_pool: Tuple[int, ...]) -> int:
+    """1~7 레인 튜플에서 한 레인을 고릅니다."""
+    lane = _choose_spawn_value(lane_pool, "lane_pool")
+    if (
+        not isinstance(lane, int)
+        or isinstance(lane, bool)
+        or not 1 <= lane <= GRID_SIZE
+    ):
+        raise ValueError(f"선택된 레인은 1부터 {GRID_SIZE} 사이여야 합니다.")
+    return lane
+
+
+def _choose_spawn_direction(direction_pool: Tuple[str, ...]) -> str:
+    """방향 튜플에서 한 방향을 고릅니다."""
+    direction = _choose_spawn_value(direction_pool, "direction_pool")
+    if not isinstance(direction, str) or direction not in SPAWN_DIRECTIONS:
+        raise ValueError(
+            f"선택된 방향은 {', '.join(SPAWN_DIRECTIONS)} 중 하나여야 합니다."
+        )
+    return direction
+
+
 def spawn_ball(
-    row: Optional[int] = None,
-    col: Optional[int] = None,
-    direction: Optional[str] = None
+    lane_pool: Tuple[int, ...],
+    direction_pool: Tuple[str, ...]
 ) -> None:
-    """선택한 시계 방향 레인에서 보드 안으로 직선 공을 생성합니다."""
-    row, col, direction = _resolve_spawn_location(row, col, direction)
+    """레인·방향 풀로 위치를 정해 일반 공을 생성합니다."""
+    lane = _choose_spawn_lane(lane_pool)
+    direction = _choose_spawn_direction(direction_pool)
+    row, col = get_spawn_coordinates(direction, lane)
     position, travel = _get_spawn_edge_position(row, col, direction, 3)
     speed = (
         travel[0] * 3 * BALL_SPEED_SCALE,
@@ -2511,39 +2550,78 @@ def spawn_ball(
             return
 
 def spawn_tball(
-    row: Optional[int] = None,
-    col: Optional[int] = None,
-    direction: Optional[str] = None
+    x_pool: Tuple[int, ...],
+    y_pool: Tuple[int, ...],
+    length_pool: Tuple[int, ...],
+    turns_pool: Tuple[int, ...],
+    rot_dir_pool: Tuple[str, ...],
+    allow_same_type_overlap: bool = False
 ) -> None:
-    """선택한 타일을 중심으로 회전하는 TBall을 생성합니다."""
-    row, col, direction = _resolve_spawn_location(row, col, direction)
-    center_x, center_y = _get_grid_cell_center(row, col)
-    angle_by_direction = {
-        "top": math.pi / 2,
-        "right": math.pi,
-        "bottom": -math.pi / 2,
-        "left": 0.0
+    """보드 좌표, 궤도 길이(칸), 회전 수 풀에서 TBall 속성을 뽑습니다."""
+    x = _choose_spawn_value(x_pool, "x_pool")
+    y = _choose_spawn_value(y_pool, "y_pool")
+    if (
+        not isinstance(x, int)
+        or isinstance(x, bool)
+        or not 0 <= x < GRID_SIZE
+        or not isinstance(y, int)
+        or isinstance(y, bool)
+        or not 0 <= y < GRID_SIZE
+    ):
+        raise ValueError(f"TBall x_pool과 y_pool은 0부터 {GRID_SIZE - 1} 사이여야 합니다.")
+    length = _choose_spawn_value(length_pool, "length_pool")
+    if (
+        not isinstance(length, int)
+        or isinstance(length, bool)
+        or not 1 <= length <= GRID_SIZE
+    ):
+        raise ValueError(f"TBall 길이는 1부터 {GRID_SIZE}칸 사이여야 합니다.")
+    turns = _choose_spawn_value(turns_pool, "turns_pool")
+    if not isinstance(turns, int) or isinstance(turns, bool) or turns < 1:
+        raise ValueError("TBall 회전 수는 1 이상의 정수여야 합니다.")
+    rotation_direction = _choose_spawn_value(rot_dir_pool, "rot_dir_pool")
+    rotation_signs = {
+        "+": 1,
+        "-": -1,
+        "CW": 1,
+        "CCW": -1,
     }
+    if not isinstance(rotation_direction, str):
+        raise ValueError("TBall 회전 방향은 '+', '-', 'CW', 'CCW' 중 하나여야 합니다.")
+    rotation_sign = rotation_signs.get(rotation_direction.upper())
+    if rotation_sign is None:
+        raise ValueError("TBall 회전 방향은 '+', '-', 'CW', 'CCW' 중 하나여야 합니다.")
+    x, y = _get_grid_cell_center(y, x)
+    angle = random.uniform(0.0, math.tau)
+    orbit_length = CELL_SIZE * length
+    speed = (length+3) * rotation_sign
     for _ in range(20):
         tball = TBall()
-        tball_pos = (center_x, center_y, angle_by_direction[direction])
-        tball_length = CELL_SIZE * random.randint(1, 5)
-        tball_speed = random.randint(5, 7) * (2 * random.randint(0, 1) - 1)
-        tball_turn = random.randint(1, 2)
-        tball.configure(tball_pos, tball_length, tball_speed, tball_turn)
-        if _try_add_enemy(tball):
+        tball.configure((x, y, angle), orbit_length, speed, turns)
+        if _try_add_enemy(tball, allow_same_type_overlap):
             return
 
 def spawn_vball(
-    row: Optional[int] = None,
-    col: Optional[int] = None,
-    direction: Optional[str] = None
+    lane_pool: Tuple[int, ...],
+    direction_pool: Tuple[str, ...],
+    distance_pool: Tuple[int, ...]
 ) -> None:
-    """선택한 레인에서 진입하는 VBall을 생성합니다."""
-    row, col, direction = _resolve_spawn_location(row, col, direction)
+    """진입 레인과 보드 안쪽 이동 거리를 지정해 VBall을 생성합니다."""
+    lane = _choose_spawn_lane(lane_pool)
+    direction = _choose_spawn_direction(direction_pool)
+    row, col = get_spawn_coordinates(direction, lane)
+    distance = _choose_spawn_value(distance_pool, "distance_pool")
+    if (
+        not isinstance(distance, int)
+        or isinstance(distance, bool)
+        or not 1 <= distance <= GRID_SIZE
+    ):
+        raise ValueError(f"VBall 이동 거리는 1부터 {GRID_SIZE}칸 사이여야 합니다.")
     position, travel = _get_spawn_edge_position(row, col, direction, 3)
     speed = (travel[0] * 10, travel[1] * 10)
-    target_cell = random.randint(0, GRID_SIZE - 1)
+    target_cell = distance - 1
+    if direction in ("right", "bottom"):
+        target_cell = GRID_SIZE - distance
     for _ in range(20):
         vball = VBall()
         vball.configure(
@@ -2556,12 +2634,13 @@ def spawn_vball(
             return
 
 def spawn_laser(
-    row: Optional[int] = None,
-    col: Optional[int] = None,
-    direction: Optional[str] = None
+    lane_pool: Tuple[int, ...],
+    direction_pool: Tuple[str, ...]
 ) -> None:
-    """선택한 시계 방향 레인에서 안쪽으로 발사되는 레이저를 생성합니다."""
-    row, col, direction = _resolve_spawn_location(row, col, direction)
+    """레인·방향 풀로 위치를 정해 안쪽으로 발사되는 레이저를 생성합니다."""
+    lane = _choose_spawn_lane(lane_pool)
+    direction = _choose_spawn_direction(direction_pool)
+    row, col = get_spawn_coordinates(direction, lane)
     position, _ = _get_spawn_edge_position(row, col, direction, 3)
     for _ in range(20):
         laser = Laser()
@@ -2571,12 +2650,21 @@ def spawn_laser(
 
 
 def spawn_log(
-    row: Optional[int] = None,
-    col: Optional[int] = None,
-    direction: Optional[str] = None
+    lane_pool: Tuple[int, ...],
+    direction_pool: Tuple[str, ...],
+    length_pool: Tuple[int, ...]
 ) -> None:
-    """선택한 진입 레인의 위치에서 통나무를 생성합니다."""
-    row, col, direction = _resolve_spawn_location(row, col, direction)
+    """레인·방향과 길이(칸)를 지정해 통나무를 생성합니다."""
+    lane = _choose_spawn_lane(lane_pool)
+    direction = _choose_spawn_direction(direction_pool)
+    row, col = get_spawn_coordinates(direction, lane)
+    length = _choose_spawn_value(length_pool, "length_pool")
+    if (
+        not isinstance(length, int)
+        or isinstance(length, bool)
+        or not 1 <= length <= GRID_SIZE
+    ):
+        raise ValueError(f"통나무 길이는 1부터 {GRID_SIZE}칸 사이여야 합니다.")
     board_left = display_size[0] // 2 - BOARD_HALF_SIZE
     board_right = display_size[0] // 2 + BOARD_HALF_SIZE
     board_top = display_size[1] // 2 - BOARD_HALF_SIZE
@@ -2593,20 +2681,36 @@ def spawn_log(
         position = (board_left - 3 * CELL_SIZE - log_radius, lane_y)
 
     for _ in range(20):
-        log_length = random.randint(3, GRID_SIZE)
         log = Log()
-        log.configure(position, SPAWN_FACE_BY_DIRECTION[direction], log_length)
+        log.configure(position, SPAWN_FACE_BY_DIRECTION[direction], length)
         if _try_add_enemy(log):
             return
 
 
 def spawn_bomb(
-    row: Optional[int] = None,
-    col: Optional[int] = None,
-    direction: Optional[str] = None
+    x_pool: Tuple[int, ...],
+    y_pool: Tuple[int, ...],
+    chain_count_pool: Tuple[int, ...],
+    pattern_pool: Tuple[str, ...]
 ) -> bool:
-    """지정 또는 무작위의 빈 타일에 메인 폭탄 하나를 생성합니다."""
-    return bomb_manager.spawn(row, col, direction)
+    """보드 좌표(x=열, y=행), 연쇄 범위, 패턴 풀에서 폭탄 속성을 뽑습니다."""
+    x = _choose_spawn_value(x_pool, "x_pool")
+    y = _choose_spawn_value(y_pool, "y_pool")
+    chain_count = _choose_spawn_value(chain_count_pool, "chain_count_pool")
+    pattern = _choose_spawn_value(pattern_pool, "pattern_pool")
+    for coordinate, name in ((x, "x_pool"), (y, "y_pool")):
+        if (
+            not isinstance(coordinate, int)
+            or isinstance(coordinate, bool)
+            or not 0 <= coordinate < GRID_SIZE
+        ):
+            raise ValueError(f"{name}은(는) 0부터 {GRID_SIZE - 1} 사이여야 합니다.")
+    return bomb_manager.spawn(
+        y,
+        x,
+        chain_count=chain_count,
+        pattern=pattern
+    )
 
 
 class SpawnState:
@@ -2625,20 +2729,6 @@ class SpawnState:
 
 
 SPAWN_DELAY_SCALE = 10
-DEFAULT_LANES = (1, 2, 3, 4, 5, 6, 7)
-DEFAULT_DIRECTIONS = ("top", "right", "bottom", "left")
-
-
-def _spawn_from_lane_pool(
-    spawn_function: Callable[..., Any],
-    lane_pool: Sequence[int] = DEFAULT_LANES,
-    direction_pool: Sequence[str] = DEFAULT_DIRECTIONS
-) -> None:
-    """레인·방향 풀에서 하나를 고르고 좌표 헬퍼를 통해 장애물을 생성합니다."""
-    lane = random.choice(lane_pool)
-    direction = random.choice(direction_pool)
-    row, col = get_spawn_coordinates(direction, lane)
-    spawn_function(row=row, col=col, direction=direction)
 
 
 # 타이머 값은 기존과 같이 100/tps 단위로 감소합니다.
@@ -2648,19 +2738,30 @@ def spawn_level_1(state: SpawnState, dt: float) -> None:
     if state.ball_delay <= 0:
         state.ball_delay = random.randint(10, 30) * SPAWN_DELAY_SCALE
         for _ in range(random.randint(1, 4)):
-            _spawn_from_lane_pool(
-                spawn_ball, (1, 1, 2, 3, 4, 5, 6, 7, 7)
+            spawn_ball(
+                lane_pool=DEFAULT_LANES,
+                direction_pool=DEFAULT_DIRECTIONS
             )
     state.tball_delay -= dt
     if state.tball_delay <= 0:
         state.tball_delay = random.randint(40, 70) * SPAWN_DELAY_SCALE
         if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_tball)
+            spawn_tball(
+                x_pool=DEFAULT_COORDINATES,
+                y_pool=DEFAULT_COORDINATES,
+                length_pool=DEFAULT_TBALL_LENGTHS,
+                turns_pool=DEFAULT_TBALL_TURNS,
+                rot_dir_pool=DEFAULT_TBALL_ROTATION_DIRECTIONS,
+            )
     state.vball_delay -= dt
     if state.vball_delay <= 0:
         state.vball_delay = random.randint(20, 30) * SPAWN_DELAY_SCALE
         for _ in range(random.randint(1, 3)):
-            _spawn_from_lane_pool(spawn_vball)
+            spawn_vball(
+                lane_pool=DEFAULT_LANES,
+                direction_pool=DEFAULT_DIRECTIONS,
+                distance_pool=DEFAULT_VBALL_DISTANCES,
+            )
 
 
 def spawn_level_2(state: SpawnState, dt: float) -> None:
@@ -2668,38 +2769,60 @@ def spawn_level_2(state: SpawnState, dt: float) -> None:
     if state.ball_delay <= 0:
         state.ball_delay = random.randint(30, 50) * SPAWN_DELAY_SCALE
         for _ in range(random.randint(1, 4)):
-            _spawn_from_lane_pool(spawn_ball)
+            spawn_ball(
+                lane_pool=DEFAULT_LANES,
+                direction_pool=DEFAULT_DIRECTIONS
+            )
     state.vball_delay -= dt
     if state.vball_delay <= 0:
         state.vball_delay = 20 * SPAWN_DELAY_SCALE
         for _ in range(3):
-            _spawn_from_lane_pool(spawn_vball)
+            spawn_vball(
+                lane_pool=DEFAULT_LANES,
+                direction_pool=DEFAULT_DIRECTIONS,
+                distance_pool=DEFAULT_VBALL_DISTANCES,
+            )
     state.laser_delay -= dt
     if state.laser_delay <= 0:
         state.laser_delay = random.randint(100, 150) * SPAWN_DELAY_SCALE
         if random.random() < 1 / 5:
             state.laser_delay = 0
         for _ in range(random.randint(1, 3)):
-            _spawn_from_lane_pool(spawn_laser)
+            spawn_laser(
+                lane_pool=DEFAULT_LANES,
+                direction_pool=('left', 'right')
+            )
 
 
 def spawn_level_3(state: SpawnState, dt: float) -> None:
     state.ball_delay -= dt
     if state.ball_delay <= 0:
         state.ball_delay = random.randint(20, 50) * SPAWN_DELAY_SCALE
-        _spawn_from_lane_pool(spawn_ball)
+        spawn_ball(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=DEFAULT_DIRECTIONS
+        )
         if random.random() < 1 / 3:
             state.ball_delay = 0
     state.tball_delay -= dt
     if state.tball_delay <= 0:
         state.tball_delay = random.randint(50, 80) * SPAWN_DELAY_SCALE
         for _ in range(random.randint(2, 3)):
-            _spawn_from_lane_pool(spawn_tball)
+            spawn_tball(
+                x_pool=DEFAULT_COORDINATES,
+                y_pool=DEFAULT_COORDINATES,
+                length_pool=DEFAULT_TBALL_LENGTHS,
+                turns_pool=DEFAULT_TBALL_TURNS,
+                rot_dir_pool=DEFAULT_TBALL_ROTATION_DIRECTIONS,
+            )
     state.laser_delay -= dt
     if state.laser_delay <= 0:
         state.laser_delay = 20 * SPAWN_DELAY_SCALE
         for _ in range(random.randint(3, 5)):
-            _spawn_from_lane_pool(spawn_laser)
+            spawn_laser(
+                lane_pool=DEFAULT_LANES,
+                direction_pool=DEFAULT_DIRECTIONS
+            )
 
 
 def spawn_level_4(state: SpawnState, dt: float) -> None:
@@ -2707,11 +2830,21 @@ def spawn_level_4(state: SpawnState, dt: float) -> None:
     if state.tball_delay <= 0:
         state.tball_delay = 30 * SPAWN_DELAY_SCALE
         for _ in range(3):
-            _spawn_from_lane_pool(spawn_tball)
+            spawn_tball(
+                x_pool=DEFAULT_COORDINATES,
+                y_pool=DEFAULT_COORDINATES,
+                length_pool=DEFAULT_TBALL_LENGTHS,
+                turns_pool=DEFAULT_TBALL_TURNS,
+                rot_dir_pool=DEFAULT_TBALL_ROTATION_DIRECTIONS,
+            )
     state.log_delay -= dt
     if state.log_delay <= 0:
         state.log_delay = random.randint(50, 100) * SPAWN_DELAY_SCALE
-        _spawn_from_lane_pool(spawn_log)
+        spawn_log(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=DEFAULT_DIRECTIONS,
+            length_pool=DEFAULT_LOG_LENGTHS,
+        )
         if random.random() < 1 / 4:
             state.log_delay = 100
 
@@ -2721,77 +2854,118 @@ def spawn_level_5(state: SpawnState, dt: float) -> None:
     if state.ball_delay <= 0:
         state.ball_delay = random.randint(20, 30) * SPAWN_DELAY_SCALE
         for _ in range(random.randint(3, 6)):
-            _spawn_from_lane_pool(spawn_ball)
+            spawn_ball(
+                lane_pool=DEFAULT_LANES,
+                direction_pool=DEFAULT_DIRECTIONS
+            )
     state.vball_delay -= dt
     if state.vball_delay <= 0:
         state.vball_delay = random.randint(10, 30) * SPAWN_DELAY_SCALE
         for _ in range(random.randint(2, 4)):
-            _spawn_from_lane_pool(spawn_vball)
+            spawn_vball(
+                lane_pool=DEFAULT_LANES,
+                direction_pool=DEFAULT_DIRECTIONS,
+                distance_pool=DEFAULT_VBALL_DISTANCES,
+            )
     state.laser_delay -= dt
     if state.laser_delay <= 0:
         state.laser_delay = random.randint(30, 60) * SPAWN_DELAY_SCALE
         for _ in range(2):
-            _spawn_from_lane_pool(spawn_laser)
+            spawn_laser(
+                lane_pool=(1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 7),
+                direction_pool=DEFAULT_DIRECTIONS,
+            )
         if random.random() < 1 / 5:
-            _spawn_from_lane_pool(spawn_laser)
+            spawn_laser(
+                lane_pool=DEFAULT_LANES,
+                direction_pool=DEFAULT_DIRECTIONS
+            )
 
 
 def spawn_level_6(state: SpawnState, dt: float) -> None:
     state.ball_delay -= dt
     if state.ball_delay <= 0:
-        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
+        state.ball_delay = 10 * SPAWN_DELAY_SCALE
         for _ in range(random.randint(1, 2)):
-            _spawn_from_lane_pool(spawn_ball)
+            spawn_ball(
+                lane_pool=DEFAULT_LANES,
+                direction_pool=DEFAULT_DIRECTIONS
+            )
     state.tball_delay -= dt
     if state.tball_delay <= 0:
-        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_tball)
+        state.tball_delay = random.randint(70, 100) * SPAWN_DELAY_SCALE
+        spawn_tball(
+            x_pool=DEFAULT_COORDINATES,
+            y_pool=DEFAULT_COORDINATES,
+            length_pool=DEFAULT_TBALL_LENGTHS,
+            turns_pool=DEFAULT_TBALL_TURNS,
+            rot_dir_pool=DEFAULT_TBALL_ROTATION_DIRECTIONS,
+        )
     state.vball_delay -= dt
     if state.vball_delay <= 0:
-        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_vball)
+        state.vball_delay = random.randint(10, 20) * SPAWN_DELAY_SCALE
+        spawn_vball(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=('left', 'right'),
+            distance_pool=DEFAULT_VBALL_DISTANCES,
+        )
     state.laser_delay -= dt
     if state.laser_delay <= 0:
-        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_laser)
-    state.log_delay -= dt
-    if state.log_delay <= 0:
-        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_log)
+        state.laser_delay = random.randint(20, 30) * SPAWN_DELAY_SCALE
+        spawn_laser(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=DEFAULT_DIRECTIONS
+        )
 
 
 def spawn_level_7(state: SpawnState, dt: float) -> None:
     state.ball_delay -= dt
     if state.ball_delay <= 0:
-        state.ball_delay = 100
+        state.ball_delay = 10 * SPAWN_DELAY_SCALE
         for _ in range(random.randint(0, 1)):
-            _spawn_from_lane_pool(spawn_ball, direction_pool=("top", "bottom"))
+            spawn_ball(
+                lane_pool=DEFAULT_LANES,
+                direction_pool=DEFAULT_DIRECTIONS
+            )
         if random.random() < 1 / 4:
             state.ball_delay = 0
     state.tball_delay -= dt
     if state.tball_delay <= 0:
         state.tball_delay = random.randint(20, 40) * SPAWN_DELAY_SCALE
         for _ in range(random.randint(1, 2)):
-            _spawn_from_lane_pool(spawn_tball)
+            spawn_tball(
+                x_pool=DEFAULT_COORDINATES,
+                y_pool=DEFAULT_COORDINATES,
+                length_pool=DEFAULT_TBALL_LENGTHS,
+                turns_pool=DEFAULT_TBALL_TURNS,
+                rot_dir_pool=DEFAULT_TBALL_ROTATION_DIRECTIONS,
+            )
     state.vball_delay -= dt
     if state.vball_delay <= 0:
         state.vball_delay = random.randint(10, 30) * SPAWN_DELAY_SCALE
         for _ in range(random.randint(2, 3)):
-            _spawn_from_lane_pool(spawn_vball)
+            spawn_vball(
+                lane_pool=DEFAULT_LANES,
+                direction_pool=DEFAULT_DIRECTIONS,
+                distance_pool=DEFAULT_VBALL_DISTANCES,
+            )
     state.laser_delay -= dt
     if state.laser_delay <= 0:
         state.laser_delay = random.randint(20, 30) * SPAWN_DELAY_SCALE
         if random.random() < 1 / 2:
             state.laser_delay = 100
-        _spawn_from_lane_pool(spawn_laser)
+        spawn_laser(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=DEFAULT_DIRECTIONS
+        )
     state.log_delay -= dt
     if state.log_delay <= 0:
         state.log_delay = random.randint(30, 60) * SPAWN_DELAY_SCALE
-        _spawn_from_lane_pool(spawn_log)
+        spawn_log(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=DEFAULT_DIRECTIONS,
+            length_pool=DEFAULT_LOG_LENGTHS,
+        )
         if random.random() < 1 / 2:
             state.log_delay = 100
 
@@ -2801,87 +2975,96 @@ def spawn_level_8(state: SpawnState, dt: float) -> None:
     if state.tball_delay <= 0:
         state.tball_delay = random.randint(50, 80) * SPAWN_DELAY_SCALE
         for _ in range(random.randint(3, 4)):
-            _spawn_from_lane_pool(spawn_tball)
+            spawn_tball(
+                x_pool=DEFAULT_COORDINATES,
+                y_pool=DEFAULT_COORDINATES,
+                length_pool=DEFAULT_TBALL_LENGTHS,
+                turns_pool=DEFAULT_TBALL_TURNS,
+                rot_dir_pool=DEFAULT_TBALL_ROTATION_DIRECTIONS,
+            )
     state.laser_delay -= dt
     if state.laser_delay <= 0:
         state.laser_delay = random.randint(20, 40) * SPAWN_DELAY_SCALE
-        _spawn_from_lane_pool(spawn_laser)
+        spawn_laser(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=DEFAULT_DIRECTIONS
+        )
     state.log_delay -= dt
     if state.log_delay <= 0:
         state.log_delay = random.randint(50, 70) * SPAWN_DELAY_SCALE
-        _spawn_from_lane_pool(spawn_log)
+        spawn_log(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=DEFAULT_DIRECTIONS,
+            length_pool=DEFAULT_LOG_LENGTHS,
+        )
         if random.random() < 1 / 5:
             state.log_delay = 200
     state.bomb_delay -= dt
     if state.bomb_delay <= 0:
-        state.bomb_delay = random.randint(30, 50) * SPAWN_DELAY_SCALE
-        _spawn_from_lane_pool(spawn_bomb)
+        state.bomb_delay = random.randint(50, 70) * SPAWN_DELAY_SCALE
+        spawn_bomb(
+            x_pool=DEFAULT_COORDINATES,
+            y_pool=DEFAULT_COORDINATES,
+            chain_count_pool=DEFAULT_BOMB_CHAIN_COUNTS,
+            pattern_pool=DEFAULT_BOMB_PATTERNS,
+        )
 
 
 def spawn_level_9(state: SpawnState, dt: float) -> None:
-    state.ball_delay -= dt
-    if state.ball_delay <= 0:
-        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
-        for _ in range(random.randint(1, 2)):
-            _spawn_from_lane_pool(spawn_ball)
-    state.tball_delay -= dt
-    if state.tball_delay <= 0:
-        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_tball)
     state.vball_delay -= dt
     if state.vball_delay <= 0:
-        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_vball)
+        state.vball_delay = random.randint(5, 10) * SPAWN_DELAY_SCALE
+        spawn_vball(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=('left',),
+            distance_pool=(1, 2, 3, 4, 4, 5, 5, 6, 7, 7, 7),
+        )
     state.laser_delay -= dt
     if state.laser_delay <= 0:
-        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_laser)
+        state.laser_delay = random.randint(30, 50) * SPAWN_DELAY_SCALE
+        spawn_laser(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=('top', 'bottom')
+        )
     state.log_delay -= dt
     if state.log_delay <= 0:
-        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_log)
-    state.bomb_delay -= dt
-    if state.bomb_delay <= 0:
-        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_bomb)
+        state.log_delay = random.randint(20, 50) * SPAWN_DELAY_SCALE
+        spawn_log(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=('top', 'bottom'),
+            length_pool=DEFAULT_LOG_LENGTHS,
+        )
 
 
 def spawn_level_10(state: SpawnState, dt: float) -> None:
     state.ball_delay -= dt
     if state.ball_delay <= 0:
-        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
-        for _ in range(random.randint(1, 2)):
-            _spawn_from_lane_pool(spawn_ball)
+        state.ball_delay = random.randint(10, 50) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(1, 4)):
+            spawn_ball(
+                lane_pool=DEFAULT_LANES,
+                direction_pool=DEFAULT_DIRECTIONS
+            )
     state.tball_delay -= dt
     if state.tball_delay <= 0:
-        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_tball)
-    state.vball_delay -= dt
-    if state.vball_delay <= 0:
-        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_vball)
-    state.laser_delay -= dt
-    if state.laser_delay <= 0:
-        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_laser)
-    state.log_delay -= dt
-    if state.log_delay <= 0:
-        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_log)
+        state.tball_delay = 50 * SPAWN_DELAY_SCALE
+        spawn_tball(
+            x_pool=DEFAULT_COORDINATES,
+            y_pool=DEFAULT_COORDINATES,
+            length_pool=DEFAULT_TBALL_LENGTHS,
+            turns_pool=DEFAULT_TBALL_TURNS,
+            rot_dir_pool=DEFAULT_TBALL_ROTATION_DIRECTIONS,
+        )
     state.bomb_delay -= dt
     if state.bomb_delay <= 0:
-        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_bomb)
+        state.bomb_delay = random.randint(20, 40) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(1, 3)):
+            spawn_bomb(
+                x_pool=DEFAULT_COORDINATES,
+                y_pool=DEFAULT_COORDINATES,
+                chain_count_pool=DEFAULT_BOMB_CHAIN_COUNTS,
+                pattern_pool=DEFAULT_BOMB_PATTERNS,
+            )
 
 
 def spawn_level_11(state: SpawnState, dt: float) -> None:
@@ -2889,22 +3072,41 @@ def spawn_level_11(state: SpawnState, dt: float) -> None:
     if state.tball_delay <= 0:
         state.tball_delay = 20 * SPAWN_DELAY_SCALE
         if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_tball)
+            spawn_tball(
+                x_pool=DEFAULT_COORDINATES,
+                y_pool=DEFAULT_COORDINATES,
+                length_pool=DEFAULT_TBALL_LENGTHS,
+                turns_pool=DEFAULT_TBALL_TURNS,
+                rot_dir_pool=DEFAULT_TBALL_ROTATION_DIRECTIONS,
+            )
     state.vball_delay -= dt
     if state.vball_delay <= 0:
         state.vball_delay = 10 * SPAWN_DELAY_SCALE
         for _ in range(random.randint(0, 2)):
-            _spawn_from_lane_pool(spawn_vball)
+            spawn_vball(
+                lane_pool=DEFAULT_LANES,
+                direction_pool=DEFAULT_DIRECTIONS,
+                distance_pool=DEFAULT_VBALL_DISTANCES,
+            )
     state.log_delay -= dt
     if state.log_delay <= 0:
         state.log_delay = random.randint(40, 60) * SPAWN_DELAY_SCALE
-        _spawn_from_lane_pool(spawn_log)
+        spawn_log(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=DEFAULT_DIRECTIONS,
+            length_pool=DEFAULT_LOG_LENGTHS,
+        )
         if random.random() < 1 / 5:
             state.log_delay = 200
     state.bomb_delay -= dt
     if state.bomb_delay <= 0:
         state.bomb_delay = 40 * SPAWN_DELAY_SCALE
-        _spawn_from_lane_pool(spawn_bomb)
+        spawn_bomb(
+            x_pool=DEFAULT_COORDINATES,
+            y_pool=DEFAULT_COORDINATES,
+            chain_count_pool=DEFAULT_BOMB_CHAIN_COUNTS,
+            pattern_pool=DEFAULT_BOMB_PATTERNS,
+        )
 
 
 def spawn_level_12(state: SpawnState, dt: float) -> None:
@@ -2912,8 +3114,9 @@ def spawn_level_12(state: SpawnState, dt: float) -> None:
     if state.laser_delay <= 0:
         state.laser_delay = SPAWN_DELAY_SCALE
         if random.random() < 1 / 7:
-            _spawn_from_lane_pool(
-                spawn_laser, direction_pool=("left", "right")
+            spawn_laser(
+                lane_pool=(1, 1, 1, 2, 3, 4, 5, 6, 7, 7, 7),
+                direction_pool=DEFAULT_DIRECTIONS
             )
     state.log_delay -= dt
     if state.log_delay <= 0:
@@ -2921,350 +3124,361 @@ def spawn_level_12(state: SpawnState, dt: float) -> None:
         if random.random() < 1 / 7:
             state.log_delay = SPAWN_DELAY_SCALE
         if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_log)
+            spawn_log(
+                lane_pool=DEFAULT_LANES,
+                direction_pool=DEFAULT_DIRECTIONS,
+                length_pool=DEFAULT_LOG_LENGTHS,
+            )
     state.bomb_delay -= dt
     if state.bomb_delay <= 0:
         state.bomb_delay = SPAWN_DELAY_SCALE
         if random.random() < 1 / 7:
-            _spawn_from_lane_pool(spawn_bomb)
+            spawn_bomb(
+                x_pool=DEFAULT_COORDINATES,
+                y_pool=DEFAULT_COORDINATES,
+                chain_count_pool=DEFAULT_BOMB_CHAIN_COUNTS,
+                pattern_pool=('+',),
+            )
 
 
 def spawn_level_13(state: SpawnState, dt: float) -> None:
-    state.ball_delay -= dt
-    if state.ball_delay <= 0:
-        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
-        for _ in range(random.randint(1, 2)):
-            _spawn_from_lane_pool(spawn_ball)
     state.tball_delay -= dt
     if state.tball_delay <= 0:
-        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_tball)
+        state.tball_delay = random.randint(10, 50) * SPAWN_DELAY_SCALE
+        spawn_tball(
+            x_pool=DEFAULT_COORDINATES,
+            y_pool=DEFAULT_COORDINATES,
+            length_pool=DEFAULT_TBALL_LENGTHS,
+            turns_pool=DEFAULT_TBALL_TURNS,
+            rot_dir_pool=DEFAULT_TBALL_ROTATION_DIRECTIONS,
+        )
     state.vball_delay -= dt
     if state.vball_delay <= 0:
-        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_vball)
-    state.laser_delay -= dt
-    if state.laser_delay <= 0:
-        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_laser)
+        state.vball_delay = random.randint(10, 20) * SPAWN_DELAY_SCALE
+        spawn_vball(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=('bottom',),
+            distance_pool=DEFAULT_VBALL_DISTANCES,
+        )
     state.log_delay -= dt
     if state.log_delay <= 0:
-        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_log)
+        state.log_delay = random.randint(20, 50) * SPAWN_DELAY_SCALE
+        spawn_log(
+            lane_pool=(4, 5, 6),
+            direction_pool=('left',),
+            length_pool=(3, 5)
+        )
     state.bomb_delay -= dt
     if state.bomb_delay <= 0:
-        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_bomb)
+        state.bomb_delay = 100 * SPAWN_DELAY_SCALE
+        spawn_bomb(
+            x_pool=DEFAULT_COORDINATES,
+            y_pool=DEFAULT_COORDINATES,
+            chain_count_pool=DEFAULT_BOMB_CHAIN_COUNTS,
+            pattern_pool=DEFAULT_BOMB_PATTERNS,
+        )
 
 
 def spawn_level_14(state: SpawnState, dt: float) -> None:
     state.ball_delay -= dt
     if state.ball_delay <= 0:
         state.ball_delay = SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_ball)
+        if random.random() < 1 / 2:
+            spawn_ball(
+                lane_pool=(1, 1, 2, 3, 4, 5, 6, 7, 7),
+                direction_pool=DEFAULT_DIRECTIONS
+            )
 
 
 def spawn_level_15(state: SpawnState, dt: float) -> None:
     state.ball_delay -= dt
     if state.ball_delay <= 0:
-        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
-        for _ in range(random.randint(1, 2)):
-            _spawn_from_lane_pool(spawn_ball)
-    state.tball_delay -= dt
-    if state.tball_delay <= 0:
-        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_tball)
-    state.vball_delay -= dt
-    if state.vball_delay <= 0:
-        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_vball)
-    state.laser_delay -= dt
-    if state.laser_delay <= 0:
-        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_laser)
+        state.ball_delay = random.randint(1, 5) * SPAWN_DELAY_SCALE
+        spawn_ball(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=DEFAULT_DIRECTIONS
+        )
     state.log_delay -= dt
     if state.log_delay <= 0:
-        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_log)
-    state.bomb_delay -= dt
-    if state.bomb_delay <= 0:
-        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_bomb)
+        state.log_delay = random.randint(20, 50) * SPAWN_DELAY_SCALE
+        spawn_log(
+            lane_pool=(2, 6),
+            direction_pool=DEFAULT_DIRECTIONS,
+            length_pool=(3,),
+        )
 
 
 def spawn_level_16(state: SpawnState, dt: float) -> None:
     state.ball_delay -= dt
     if state.ball_delay <= 0:
-        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
-        for _ in range(random.randint(1, 2)):
-            _spawn_from_lane_pool(spawn_ball)
-    state.tball_delay -= dt
-    if state.tball_delay <= 0:
-        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_tball)
-    state.vball_delay -= dt
-    if state.vball_delay <= 0:
-        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_vball)
-    state.laser_delay -= dt
-    if state.laser_delay <= 0:
-        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_laser)
-    state.log_delay -= dt
-    if state.log_delay <= 0:
-        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_log)
+        state.ball_delay = random.randint(1, 5) * SPAWN_DELAY_SCALE
+        spawn_ball(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=DEFAULT_DIRECTIONS
+        )
     state.bomb_delay -= dt
     if state.bomb_delay <= 0:
-        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_bomb)
+        state.bomb_delay = random.randint(10, 30) * SPAWN_DELAY_SCALE
+        spawn_bomb(
+            x_pool=DEFAULT_COORDINATES,
+            y_pool=DEFAULT_COORDINATES,
+            chain_count_pool=(0,),
+            pattern_pool=DEFAULT_BOMB_PATTERNS,
+        )
 
 
 def spawn_level_17(state: SpawnState, dt: float) -> None:
     state.ball_delay -= dt
     if state.ball_delay <= 0:
-        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
-        for _ in range(random.randint(1, 2)):
-            _spawn_from_lane_pool(spawn_ball)
-    state.tball_delay -= dt
-    if state.tball_delay <= 0:
-        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_tball)
+        state.ball_delay = random.randint(10, 30) * SPAWN_DELAY_SCALE
+        spawn_ball(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=DEFAULT_DIRECTIONS
+        )
     state.vball_delay -= dt
     if state.vball_delay <= 0:
-        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_vball)
+        state.vball_delay = random.randint(10, 30) * SPAWN_DELAY_SCALE
+        spawn_vball(
+            lane_pool=(1, 2, 3, 5, 6, 7),
+            direction_pool=DEFAULT_DIRECTIONS,
+            distance_pool=(1, 2, 3),
+        )
     state.laser_delay -= dt
     if state.laser_delay <= 0:
-        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_laser)
-    state.log_delay -= dt
-    if state.log_delay <= 0:
-        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_log)
+        state.laser_delay = 3 * SPAWN_DELAY_SCALE
+        spawn_laser(
+            lane_pool=(4,),
+            direction_pool=('top', 'bottom')
+            )
+        spawn_laser(
+            lane_pool=(4,),
+            direction_pool=('left', 'right')
+        )
     state.bomb_delay -= dt
     if state.bomb_delay <= 0:
-        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_bomb)
+        state.bomb_delay = 40 * SPAWN_DELAY_SCALE
+        spawn_bomb(
+            x_pool=DEFAULT_COORDINATES,
+            y_pool=DEFAULT_COORDINATES,
+            chain_count_pool=DEFAULT_BOMB_CHAIN_COUNTS,
+            pattern_pool=DEFAULT_BOMB_PATTERNS,
+        )
 
 
 def spawn_level_18(state: SpawnState, dt: float) -> None:
-    state.ball_delay -= dt
-    if state.ball_delay <= 0:
-        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
-        for _ in range(random.randint(1, 2)):
-            _spawn_from_lane_pool(spawn_ball)
-    state.tball_delay -= dt
-    if state.tball_delay <= 0:
-        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_tball)
-    state.vball_delay -= dt
-    if state.vball_delay <= 0:
-        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_vball)
     state.laser_delay -= dt
     if state.laser_delay <= 0:
-        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_laser)
+        state.laser_delay = 2 * SPAWN_DELAY_SCALE
+        spawn_laser(
+            lane_pool=(3, 4, 4, 4, 5),
+            direction_pool=DEFAULT_DIRECTIONS
+        )
     state.log_delay -= dt
     if state.log_delay <= 0:
-        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_log)
+        state.log_delay = random.randint(100, 150) * SPAWN_DELAY_SCALE
+        spawn_log(
+            lane_pool=(2, 6),
+            direction_pool=DEFAULT_DIRECTIONS,
+            length_pool=(3,),
+        )
     state.bomb_delay -= dt
     if state.bomb_delay <= 0:
-        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_bomb)
+        state.bomb_delay = 20 * SPAWN_DELAY_SCALE
+        spawn_bomb(
+            x_pool=DEFAULT_COORDINATES,
+            y_pool=DEFAULT_COORDINATES,
+            chain_count_pool=DEFAULT_BOMB_CHAIN_COUNTS,
+            pattern_pool=DEFAULT_BOMB_PATTERNS,
+        )
 
 
 def spawn_level_19(state: SpawnState, dt: float) -> None:
-    state.ball_delay -= dt
-    if state.ball_delay <= 0:
-        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
-        for _ in range(random.randint(1, 2)):
-            _spawn_from_lane_pool(spawn_ball)
     state.tball_delay -= dt
     if state.tball_delay <= 0:
-        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_tball)
-    state.vball_delay -= dt
-    if state.vball_delay <= 0:
-        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_vball)
-    state.laser_delay -= dt
-    if state.laser_delay <= 0:
-        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_laser)
+        state.tball_delay = 4 * SPAWN_DELAY_SCALE
+        spawn_tball(
+            x_pool=(3,),
+            y_pool=(3,),
+            length_pool=(1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 5, 6, 7),
+            turns_pool=(1,),
+            rot_dir_pool=DEFAULT_TBALL_ROTATION_DIRECTIONS,
+        )
     state.log_delay -= dt
     if state.log_delay <= 0:
-        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_log)
-    state.bomb_delay -= dt
-    if state.bomb_delay <= 0:
-        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_bomb)
+        state.log_delay = 30 * SPAWN_DELAY_SCALE
+        spawn_log(
+            lane_pool=(4,),
+            direction_pool=DEFAULT_DIRECTIONS,
+            length_pool=(3,),
+        )
 
 
 def spawn_level_20(state: SpawnState, dt: float) -> None:
     state.ball_delay -= dt
     if state.ball_delay <= 0:
-        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
-        for _ in range(random.randint(1, 2)):
-            _spawn_from_lane_pool(spawn_ball)
-    state.tball_delay -= dt
-    if state.tball_delay <= 0:
-        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_tball)
+        state.ball_delay = 10 * SPAWN_DELAY_SCALE
+        spawn_ball(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=DEFAULT_DIRECTIONS
+        )
     state.vball_delay -= dt
     if state.vball_delay <= 0:
-        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_vball)
+        state.vball_delay = random.randint(10, 20) * SPAWN_DELAY_SCALE
+        spawn_vball(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=DEFAULT_DIRECTIONS,
+            distance_pool=DEFAULT_VBALL_DISTANCES,
+        )
     state.laser_delay -= dt
     if state.laser_delay <= 0:
-        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_laser)
-    state.log_delay -= dt
-    if state.log_delay <= 0:
-        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_log)
+        state.laser_delay = 10 * SPAWN_DELAY_SCALE
+        spawn_laser(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=DEFAULT_DIRECTIONS
+        )
     state.bomb_delay -= dt
     if state.bomb_delay <= 0:
-        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_bomb)
+        state.bomb_delay = random.randint(10, 30) * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(1, 3)):
+            spawn_bomb(
+                x_pool=DEFAULT_COORDINATES,
+                y_pool=DEFAULT_COORDINATES,
+                chain_count_pool=DEFAULT_BOMB_CHAIN_COUNTS,
+                pattern_pool=DEFAULT_BOMB_PATTERNS,
+            )
 
 
 def spawn_level_21(state: SpawnState, dt: float) -> None:
     state.ball_delay -= dt
     if state.ball_delay <= 0:
-        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
-        for _ in range(random.randint(1, 2)):
-            _spawn_from_lane_pool(spawn_ball)
+        state.ball_delay = random.randint(10, 20) * SPAWN_DELAY_SCALE
+        spawn_ball(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=DEFAULT_DIRECTIONS
+        )
     state.tball_delay -= dt
     if state.tball_delay <= 0:
-        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_tball)
+        state.tball_delay = 50 * SPAWN_DELAY_SCALE
+        spawn_tball(
+            x_pool=(0,), y_pool=(0,),
+            length_pool=(2,),
+            turns_pool=(3,), rot_dir_pool=('+',), allow_same_type_overlap=True
+        )
+        spawn_tball(
+            x_pool=(0,), y_pool=(6,),
+            length_pool=(4,),
+            turns_pool=(3,), rot_dir_pool=('-',), allow_same_type_overlap=True
+        )
+        spawn_tball(
+            x_pool=(6,), y_pool=(6,),
+            length_pool=(2,),
+            turns_pool=(3,), rot_dir_pool=('+',), allow_same_type_overlap=True
+        )
     state.vball_delay -= dt
     if state.vball_delay <= 0:
-        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_vball)
+        state.vball_delay = random.randint(10, 20) * SPAWN_DELAY_SCALE
+        spawn_vball(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=DEFAULT_DIRECTIONS,
+            distance_pool=DEFAULT_VBALL_DISTANCES,
+        )
     state.laser_delay -= dt
     if state.laser_delay <= 0:
-        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_laser)
+        state.laser_delay = random.randint(20, 30) * SPAWN_DELAY_SCALE
+        spawn_laser(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=DEFAULT_DIRECTIONS
+        )
     state.log_delay -= dt
     if state.log_delay <= 0:
-        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_log)
-    state.bomb_delay -= dt
-    if state.bomb_delay <= 0:
-        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_bomb)
+        state.log_delay = random.randint(30, 50) * SPAWN_DELAY_SCALE
+        spawn_log(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=('right',),
+            length_pool=DEFAULT_LOG_LENGTHS
+        )
 
 
 def spawn_level_22(state: SpawnState, dt: float) -> None:
     state.ball_delay -= dt
     if state.ball_delay <= 0:
-        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
-        for _ in range(random.randint(1, 2)):
-            _spawn_from_lane_pool(spawn_ball)
-    state.tball_delay -= dt
-    if state.tball_delay <= 0:
-        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_tball)
-    state.vball_delay -= dt
-    if state.vball_delay <= 0:
-        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_vball)
+        state.ball_delay = 7 * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(1, 3)):
+            spawn_ball(
+                lane_pool=(1, 2, 3, 5, 6, 7),
+                direction_pool=('left',)
+            )
     state.laser_delay -= dt
     if state.laser_delay <= 0:
-        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_laser)
-    state.log_delay -= dt
-    if state.log_delay <= 0:
-        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_log)
+        state.laser_delay = 5 * SPAWN_DELAY_SCALE
+        spawn_laser(
+            lane_pool=(4,),
+            direction_pool=('right',)
+        )
     state.bomb_delay -= dt
     if state.bomb_delay <= 0:
-        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_bomb)
+        state.bomb_delay = random.randint(20, 30) * SPAWN_DELAY_SCALE
+        spawn_bomb(
+            x_pool=DEFAULT_COORDINATES,
+            y_pool=DEFAULT_COORDINATES,
+            chain_count_pool=DEFAULT_BOMB_CHAIN_COUNTS,
+            pattern_pool=DEFAULT_BOMB_PATTERNS,
+        )
 
 
 def spawn_level_23(state: SpawnState, dt: float) -> None:
     state.ball_delay -= dt
     if state.ball_delay <= 0:
-        state.ball_delay = random.randint(12, 24) * SPAWN_DELAY_SCALE
-        for _ in range(random.randint(1, 2)):
-            _spawn_from_lane_pool(spawn_ball)
+        state.ball_delay = 10 * SPAWN_DELAY_SCALE
+        for _ in range(random.randint(0, 2)):
+            spawn_ball(
+                lane_pool=DEFAULT_LANES,
+                direction_pool=DEFAULT_DIRECTIONS
+            )
     state.tball_delay -= dt
     if state.tball_delay <= 0:
-        state.tball_delay = random.randint(55, 95) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_tball)
+        state.tball_delay = 20 * SPAWN_DELAY_SCALE
+        if random.random() < 1 / 2:
+            spawn_tball(
+                x_pool=DEFAULT_COORDINATES,
+                y_pool=DEFAULT_COORDINATES,
+                length_pool=DEFAULT_TBALL_LENGTHS,
+                turns_pool=DEFAULT_TBALL_TURNS,
+                rot_dir_pool=DEFAULT_TBALL_ROTATION_DIRECTIONS,
+            )
     state.vball_delay -= dt
     if state.vball_delay <= 0:
-        state.vball_delay = random.randint(65, 110) * SPAWN_DELAY_SCALE
+        state.vball_delay = 10 * SPAWN_DELAY_SCALE
         if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_vball)
+            spawn_vball(
+                lane_pool=DEFAULT_LANES,
+                direction_pool=DEFAULT_DIRECTIONS,
+                distance_pool=DEFAULT_VBALL_DISTANCES,
+            )
     state.laser_delay -= dt
     if state.laser_delay <= 0:
-        state.laser_delay = random.randint(70, 120) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 2:
-            _spawn_from_lane_pool(spawn_laser)
+        state.laser_delay = 10 * SPAWN_DELAY_SCALE
+        spawn_laser(
+            lane_pool=(1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7),
+            direction_pool=DEFAULT_DIRECTIONS
+        )
     state.log_delay -= dt
     if state.log_delay <= 0:
-        state.log_delay = random.randint(90, 150) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_log)
+        state.log_delay = random.randint(20, 50) * SPAWN_DELAY_SCALE
+        spawn_log(
+            lane_pool=DEFAULT_LANES,
+            direction_pool=DEFAULT_DIRECTIONS,
+            length_pool=DEFAULT_LOG_LENGTHS,
+        )
     state.bomb_delay -= dt
     if state.bomb_delay <= 0:
-        state.bomb_delay = random.randint(100, 160) * SPAWN_DELAY_SCALE
-        if random.random() < 1 / 3:
-            _spawn_from_lane_pool(spawn_bomb)
+        state.bomb_delay = random.randint(5, 30) * SPAWN_DELAY_SCALE
+        spawn_bomb(
+            x_pool=DEFAULT_COORDINATES,
+            y_pool=DEFAULT_COORDINATES,
+            chain_count_pool=DEFAULT_BOMB_CHAIN_COUNTS,
+            pattern_pool=DEFAULT_BOMB_PATTERNS,
+        )
 
 
 SPAWN_FUNCTIONS_BY_LEVEL: Tuple[
@@ -3550,11 +3764,13 @@ def _get_enemy_spawn_rect(enemy) -> pygame.Rect:
     return spawn_rect
 
 
-def _try_add_enemy(enemy) -> bool:
+def _try_add_enemy(enemy, allow_same_type_overlap: bool = False) -> bool:
     """겹치는 장애물이 없을 때만 생성 목록에 추가합니다."""
     candidate_rect = _get_enemy_spawn_rect(enemy)
     for existing_enemy in enemies:
         if existing_enemy.is_deleted():
+            continue
+        if allow_same_type_overlap and type(existing_enemy) is type(enemy):
             continue
         if candidate_rect.colliderect(_get_enemy_spawn_rect(existing_enemy)):
             return False

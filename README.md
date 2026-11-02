@@ -196,7 +196,9 @@ py 7x7.py
 
 레이저의 발사 유지 시간은 `LASER_BEAM_DURATION_SECONDS`, 퇴장 속도는 `LASER_RETRACT_SPEED`에서 조정합니다. `BombManager`는 메인 폭탄 생성과 업데이트를 담당합니다.
 
-레벨별 스폰 패턴은 [7x7.py](./7x7.py)의 `spawn_level_1`부터 `spawn_level_23`까지 각 함수에서 직접 수정합니다. 각 장애물은 `state.ball_delay -= dt`와 `if state.ball_delay <= 0:` 형태로 타이머를 관리하며, `random.randint`로 다음 대기 시간과 생성 개수를 정하고 `random.random()`으로 출현 확률을 조절합니다. `lane_pool`과 `direction_pool`에 중복 항목을 넣으면 해당 레인이나 방향이 더 자주 선택됩니다. 예를 들어 `lane_pool = [1, 1, 2, 3, 4, 5, 6, 7, 7]`은 가장자리 레인을 더 자주 선택합니다. `get_spawn_coordinates(direction, lane)`은 1~7번 레인을 시계 방향의 `(행, 열)`로 변환하고, 스폰 함수에 위치와 방향을 전달합니다. `dt`는 기존 타이머 단위를 유지하기 위해 메인 루프에서 `100 / tps`로 전달됩니다. 각 레벨의 기본 스폰 패턴도 개별 함수에 직접 적혀 있어, 다른 레벨에 영향을 주지 않고 조절할 수 있습니다.
+레벨별 스폰 패턴은 [7x7.py](./7x7.py)의 `spawn_level_1`부터 `spawn_level_23`까지 각 함수에서 직접 수정합니다. 각 장애물은 `state.ball_delay -= dt`와 `if state.ball_delay <= 0:` 형태로 타이머를 관리하며, `random.randint`로 다음 대기 시간과 생성 개수를 정하고 `random.random()`으로 출현 확률을 조절합니다.
+
+모든 장애물별 스폰 인자는 반드시 튜플 풀로 전달하며, 함수 안에서 각 속성을 `random.choice()`로 선택합니다. 중복 값은 가중치가 됩니다. 예: `spawn_ball(lane_pool=(1, 1, 2, 3), direction_pool=("top", "top", "left"))`. Ball·Laser의 `lane_pool`은 1~7, 방향 풀에는 `top`, `right`, `bottom`, `left`를 사용합니다. VBall은 여기에 `distance_pool=(1, 3, 5)`(목표 이동 거리 1~7칸), Log는 `length_pool=(3, 5, 7)`(길이 1~7칸)을 추가로 받습니다. TBall은 `x_pool`, `y_pool`(보드의 0~6 열·행 인덱스), `length_pool`(궤도 길이 1~7칸), `turns_pool`(1 이상의 회전 수), `rot_dir_pool`을 받습니다. TBall 회전 방향은 `("+", "-")` 또는 `("CW", "CCW")`로 지정할 수 있으며, `+`/`CW`는 시계 방향, `-`/`CCW`는 반시계 방향입니다. 한 가지만 지정할 때는 `rot_dir_pool=("-",)`처럼 원소 하나인 튜플을 사용합니다. TBall과 Bomb의 x/y는 0부터 6까지의 보드 인덱스이며, 중앙 칸은 1-indexed `(4, 4)` 즉 0-indexed `(3, 3)`입니다. Bomb은 `x_pool`, `y_pool`, `chain_count_pool`(0~3), `pattern_pool=("+", "x")`를 받습니다. 빈 튜플이나 선택된 값이 유효 범위를 벗어나면 스폰 함수가 `ValueError`를 발생시켜 잘못된 설정을 명확히 알립니다. `get_spawn_coordinates(direction, lane)`은 레인 기반 장애물의 방향과 레인을 보드의 `(행, 열)`로 변환합니다. `dt`는 기존 타이머 단위를 유지하기 위해 메인 루프에서 `100 / tps`로 전달되며, 각 레벨의 패턴은 다른 레벨에 영향을 주지 않고 독립적으로 조절할 수 있습니다. TBall은 먼저 모든 궤도선을 그린 다음 모든 장애물 본체를 그려 겹침 시 궤도선이 본체를 가리지 않게 합니다.
 
 플레이어 렌더링의 보간 속도는 `PLAYER_RENDER_SMOOTHING_SPEED`에서 조정할 수 있습니다. VBall은 원래의 프레임 기반 가감속으로 선택된 타일 중심에서 방향을 바꿉니다.
 

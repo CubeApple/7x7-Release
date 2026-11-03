@@ -1,6 +1,6 @@
 {
     "version": 1,
-    "game_level": 11,
+    "game_level": 1,
     "track_ids": [
         "Sunburst_NCS.mp3",
         "MintParfait.mp3",
@@ -27,7 +27,6 @@
         "YourNewHome.mp3"
     ],
     "score_record": [
-        25.552324921002523,
         0,
         0,
         0,
@@ -36,19 +35,19 @@
         0,
         0,
         0,
-        100.0,
-        37.64850082123791,
-        0,
-        19.155569921778003,
         0,
         0,
         0,
-        30.63945722954767,
-        30.649620185636355,
-        36.05705715188578,
-        33.87340856300548,
-        42.23927586454144,
-        16.42821979908381,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
         0
     ],
     "level_stats": [
@@ -56,10 +55,73 @@
             "cleared": false,
             "clear_count": 0,
             "best_clear_rank": "Not cleared",
-            "best_progress": 25.552324921002523,
-            "best_score": 6219,
-            "last_score": 4201,
-            "total_attempts": 2
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared",
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared",
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared",
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared",
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared",
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared",
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
+        },
+        {
+            "cleared": false,
+            "clear_count": 0,
+            "best_clear_rank": "Not cleared",
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
         },
         {
             "cleared": false,
@@ -134,24 +196,6 @@
             "total_attempts": 0
         },
         {
-            "cleared": true,
-            "clear_count": 1,
-            "best_clear_rank": "Great",
-            "best_progress": 100.0,
-            "best_score": 11726,
-            "last_score": 11726,
-            "total_attempts": 1
-        },
-        {
-            "cleared": false,
-            "clear_count": 0,
-            "best_clear_rank": "Not cleared",
-            "best_progress": 37.64850082123791,
-            "best_score": 4923,
-            "last_score": 4513,
-            "total_attempts": 4
-        },
-        {
             "cleared": false,
             "clear_count": 0,
             "best_clear_rank": "Not cleared",
@@ -164,10 +208,10 @@
             "cleared": false,
             "clear_count": 0,
             "best_clear_rank": "Not cleared",
-            "best_progress": 19.155569921778003,
-            "best_score": 7130,
-            "last_score": 7130,
-            "total_attempts": 2
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
         },
         {
             "cleared": false,
@@ -200,55 +244,10 @@
             "cleared": false,
             "clear_count": 0,
             "best_clear_rank": "Not cleared",
-            "best_progress": 30.63945722954767,
-            "best_score": 7211,
-            "last_score": 7211,
-            "total_attempts": 2
-        },
-        {
-            "cleared": false,
-            "clear_count": 0,
-            "best_clear_rank": "Not cleared",
-            "best_progress": 30.649620185636355,
-            "best_score": 12398,
-            "last_score": 12398,
-            "total_attempts": 2
-        },
-        {
-            "cleared": false,
-            "clear_count": 0,
-            "best_clear_rank": "Not cleared",
-            "best_progress": 36.05705715188578,
-            "best_score": 3093,
-            "last_score": 3093,
-            "total_attempts": 2
-        },
-        {
-            "cleared": false,
-            "clear_count": 0,
-            "best_clear_rank": "Not cleared",
-            "best_progress": 33.87340856300548,
-            "best_score": 5180,
-            "last_score": 5180,
-            "total_attempts": 2
-        },
-        {
-            "cleared": false,
-            "clear_count": 0,
-            "best_clear_rank": "Not cleared",
-            "best_progress": 42.23927586454144,
-            "best_score": 5076,
-            "last_score": 4311,
-            "total_attempts": 7
-        },
-        {
-            "cleared": false,
-            "clear_count": 0,
-            "best_clear_rank": "Not cleared",
-            "best_progress": 16.42821979908381,
-            "best_score": 3639,
-            "last_score": 3639,
-            "total_attempts": 1
+            "best_progress": 0,
+            "best_score": 0,
+            "last_score": 0,
+            "total_attempts": 0
         },
         {
             "cleared": false,

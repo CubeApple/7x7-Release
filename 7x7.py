@@ -4391,7 +4391,7 @@ while should_restart:
                         pause = True
                         game_state = STATE_PAUSE
                     esc_hold_seconds = 0.0
-                if event.key == pygame.K_h:
+                if event.key == pygame.K_h and False:
                     hitbox = not hitbox
             if event.type == pygame.KEYUP and event.key == pygame.K_ESCAPE:
                 if (

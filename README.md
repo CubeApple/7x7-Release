@@ -1,7 +1,8 @@
 # 🎵 7x7 Rhythm Game (v1.0.0)
 
-![alt text](image-4.png)
-![alt text](image-1.png)
+<img width="1800" height="1347" alt="image" src="https://github.com/user-attachments/assets/6cf3d921-1958-409d-9829-f754c93540d8" />
+<img width="1800" height="1347" alt="image" src="https://github.com/user-attachments/assets/22bbcb9d-16d0-4968-9df7-35cb53db14fe" />
+
 
 ![Version](https://img.shields.io/badge/version-1.0.0-blue)
 ![Python](https://img.shields.io/badge/Python-3.x-blue?logo=python)
